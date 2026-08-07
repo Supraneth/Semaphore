@@ -4,6 +4,13 @@ Une carte Home Assistant qui affiche vos caméras Frigate comme une scène 2.5D 
 secteurs de vision projetés au sol, détections positionnées géographiquement,
 étages empilables, et rejeu temporel qui pilote toute la scène.
 
+![Sémaphore : étages séparés, secteurs de vision arrêtés par les murs, détections au sol](docs/semaphore.png)
+
+*Le banc d'essai, en vue éclatée. Le fond beige est le style keyless de MapLibre —
+sans clé MapTiler il n'y a ni imagerie ni bâtiments. Ce qu'on voit malgré tout :
+les pièces extrudées, les cônes qui s'arrêtent net sur les murs plutôt que de les
+traverser, et la traînée orange d'un objet suivi au sol.*
+
 ---
 
 ## Le parti pris
