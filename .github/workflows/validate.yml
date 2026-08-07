@@ -4,8 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  release:
+    types: [published]
   schedule:
     - cron: '0 4 * * 1'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -21,6 +24,13 @@ jobs:
       - run: npm run build
 
   hacs:
+    # HACS resolves a plugin from the latest release's assets, and `dist/` is
+    # deliberately not committed — the release workflow attaches the bundle
+    # instead. Before the first release there is simply nothing for HACS to
+    # find, so running this on every push would report a red branch for a
+    # situation that is not a defect. It runs where the answer means something:
+    # once a release exists, weekly afterwards, and on demand.
+    if: github.event_name != 'push' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
