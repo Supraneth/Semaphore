@@ -1,0 +1,135 @@
+import type { CameraState } from './types';
+
+/**
+ * The nautical chart palette.
+ *
+ * On a paper chart a lighthouse's coverage is drawn as a coloured angular
+ * sector: white where the channel is clear, red and green where it is not. A
+ * field of view is the same object — a wedge whose meaning depends on where you
+ * stand inside it. Borrowing the convention gives colours that *carry
+ * information* instead of decorating, and sidesteps the black-background,
+ * acid-accent look every other surveillance UI has.
+ *
+ * Every colour in the card comes from here. Nothing else may hard-code a hex.
+ */
+export const CHART = {
+  /** Clear sector: nothing to report. */
+  sectorWhite: '#F4E7BE',
+  /** Unclassified movement — a buoy light, not yet a hazard. */
+  buoyYellow: '#E2A23A',
+  /** A classified object is in the sector. */
+  sectorRed: '#D9503C',
+  /** Degraded feed: the light is lit but not to be trusted. */
+  sectorGreen: '#2F9E6B',
+  /** Off air. */
+  slate: '#5B7285',
+
+  /** Deep chart blue — halos, strokes, the ground under everything. */
+  ink: '#0C2233',
+  /** Chart paper. Text on ink, floors on the map. */
+  parchment: '#EFE7D4',
+  /** Paper in shadow: wall faces. */
+  parchmentShade: '#D6CDB6',
+  /** Basemap building extrusions, a shade off the ink. */
+  massing: '#12303F',
+} as const;
+
+/** `#RRGGBB` to the `[0,1]` triple the shaders want. */
+export function hexRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+export interface StateStyle {
+  css: string;
+  rgb: [number, number, number];
+  /** Base alpha of the sector fill. */
+  intensity: number;
+  /**
+   * Sweep speed in radar revolutions per second. Zero means a still sector —
+   * and a still sector is what lets the rAF loop stop entirely.
+   */
+  sweep: number;
+  caption: string;
+}
+
+export const STATE_STYLES: Record<CameraState, StateStyle> = {
+  nominal: {
+    css: CHART.sectorWhite,
+    rgb: hexRgb(CHART.sectorWhite),
+    intensity: 0.16,
+    sweep: 0,
+    caption: 'Veille',
+  },
+  motion: {
+    css: CHART.buoyYellow,
+    rgb: hexRgb(CHART.buoyYellow),
+    intensity: 0.3,
+    sweep: 0.22,
+    caption: 'Mouvement',
+  },
+  alert: {
+    css: CHART.sectorRed,
+    rgb: hexRgb(CHART.sectorRed),
+    intensity: 0.42,
+    sweep: 0.5,
+    caption: 'Détection',
+  },
+  degraded: {
+    css: CHART.sectorGreen,
+    rgb: hexRgb(CHART.sectorGreen),
+    intensity: 0.24,
+    sweep: 0.12,
+    caption: 'Flux dégradé',
+  },
+  offline: {
+    css: CHART.slate,
+    rgb: hexRgb(CHART.slate),
+    intensity: 0.08,
+    sweep: 0,
+    caption: 'Hors ligne',
+  },
+};
+
+/**
+ * Colour for a detection blip.
+ *
+ * People are the thing you actually look for, so they get the red that already
+ * means "classified object". Vehicles get the buoy yellow. Everything else —
+ * Frigate will happily label a cat — falls back to chart white so an unusual
+ * label never reads as more urgent than a person.
+ */
+const LABEL_COLOURS: Record<string, string> = {
+  person: CHART.sectorRed,
+  car: CHART.buoyYellow,
+  motorcycle: CHART.buoyYellow,
+  bus: CHART.buoyYellow,
+  truck: CHART.buoyYellow,
+  bicycle: CHART.sectorGreen,
+  dog: CHART.sectorGreen,
+  cat: CHART.sectorGreen,
+};
+
+export function labelCss(label: string): string {
+  return LABEL_COLOURS[label] ?? CHART.sectorWhite;
+}
+
+export function labelRgb(label: string): [number, number, number] {
+  return hexRgb(labelCss(label));
+}
+
+/**
+ * Animation timings, in milliseconds.
+ *
+ * Three durations, not a scale: 180 for something that just acknowledges a
+ * click, 320 for a panel arriving, 650 for a change of scene. Camera flights
+ * get 900 because the map has further to travel than any DOM element.
+ */
+export const MOTION = {
+  tap: 180,
+  panel: 320,
+  scene: 650,
+  flight: 900,
+  /** Overshoot-free arrival. Everything that lands uses this. */
+  ease: 'cubic-bezier(0.22, 1, 0.36, 1)',
+} as const;

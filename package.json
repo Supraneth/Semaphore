@@ -1,0 +1,26 @@
+{
+  "name": "semaphore-card",
+  "version": "0.1.0",
+  "description": "Vos caméras Frigate en scène 2.5D : secteurs de vision, détections au sol, rejeu.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lit": "^3.2.1",
+    "maplibre-gl": "^5.6.0"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.16",
+    "typescript": "~5.6.3",
+    "vite": "^5.4.11"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

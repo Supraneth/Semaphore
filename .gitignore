@@ -1,0 +1,18 @@
+node_modules/
+
+# Built by the release workflow and attached to the GitHub release. HACS pulls
+# it from there for plugin repositories, so it must not live on the branch.
+dist/
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local tooling state
+.claude/settings.local.json
+*.local
+*.log
+npm-debug.log*

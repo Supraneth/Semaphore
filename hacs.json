@@ -1,0 +1,7 @@
+{
+  "name": "Sémaphore",
+  "render_readme": true,
+  "filename": "semaphore.js",
+  "homeassistant": "2024.4.0",
+  "hide_default_branch": true
+}
