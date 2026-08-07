@@ -213,6 +213,23 @@ cameras:
 Le seul champ vraiment pénible à remplir à la main est `position` / `azimuth` /
 `fov`. C'est ce que règle l'éditeur visuel — bouton **Plan**.
 
+### Le minimum qui fonctionne
+
+Une caméra n'a besoin que de deux champs. Le reste a des valeurs par défaut
+(`azimuth: 0`, `fov: 90`, `range: 20`, `height: 3`) :
+
+```yaml
+type: custom:semaphore-card
+maptiler-api-key: VOTRE_CLE
+cameras:
+  - name: allee                 # le nom Frigate, celui de frigate/<nom>/…
+    position: [-2.74996, 47.66018]   # [longitude, latitude], dans cet ordre
+```
+
+`position` est **[longitude, latitude]** — l'inverse de ce que Google Maps
+affiche quand on copie des coordonnées. Une caméra sans `position` est l'erreur
+la plus courante ; la carte vous le dira en la nommant.
+
 ### Si les blips atterrissent loin de leur caméra
 
 Le format du champ `box` publié par Frigate a changé selon les versions : deux

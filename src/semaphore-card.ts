@@ -4,6 +4,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import { ref } from 'lit/directives/ref.js';
 import type { CameraConfig, CameraState, Detection, SemaphoreConfig } from './types';
 import { Engine } from './engine';
+import { validateConfig } from './config';
 import { FrigateBridge } from './frigate';
 import { STATE_STYLES } from './theme';
 import { styles } from './semaphore-card-css';
@@ -45,24 +46,15 @@ export class SemaphoreCard extends LitElement {
 
   // ---- Home Assistant contract -------------------------------------------
 
+  /**
+   * Everything the config is checked for lives in `validateConfig`, which
+   * throws with a message naming the offending entry. Home Assistant shows
+   * whatever is thrown here directly in the card editor, so this is the one
+   * place where a clear error is worth more than a clever recovery.
+   */
   setConfig(config: SemaphoreConfig): void {
-    // `demo` opts into the keyless basemap deliberately. Every other style
-    // needs a key, and failing here — rather than showing a blank map — is what
-    // tells the user which of the two mistakes they made.
-    if (!config['maptiler-api-key'] && config['map-style'] !== 'demo') {
-      throw new Error(
-        'Ajoutez votre clé MapTiler dans `maptiler-api-key`, ' +
-          'ou passez `map-style: demo` pour un aperçu sans clé.',
-      );
-    }
-    if (!config.cameras?.length) {
-      throw new Error('Add at least one camera under `cameras`.');
-    }
-    if (!config.levels?.length) {
-      config = { ...config, levels: [{ id: 'ground', name: 'Extérieur', elevation: 0 }] };
-    }
-    this.config = config;
-    this.activeLevel = config.levels[0].id;
+    this.config = validateConfig(config);
+    this.activeLevel = this.config.levels[0].id;
   }
 
   getCardSize(): number {
@@ -145,8 +137,12 @@ export class SemaphoreCard extends LitElement {
       );
       this.ready = true;
     } catch (err) {
-      this.error =
-        err instanceof Error ? err.message : 'The map could not be initialised.';
+      // A raw TypeError above an empty map tells the user nothing about what
+      // to change. Anything that is not already one of our own messages gets
+      // said plainly and kept, so it is still reportable.
+      const detail = err instanceof Error ? err.message : String(err);
+      this.error = `La scène n'a pas pu démarrer : ${detail}`;
+      console.error('[semaphore] initialisation failed', err);
     }
   }
 

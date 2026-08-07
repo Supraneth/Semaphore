@@ -168,7 +168,9 @@ export class PlanLayer implements CustomLayerInterface {
     for (let i = 0; i < levels.length; i++) {
       const level = levels[i];
       const plan = level.plan;
-      if (!plan?.url || plan.corners?.length < 4) continue;
+      // `undefined < 4` is false, so a missing `corners` used to slip past this
+      // guard and blow up in writeQuad. Check the array itself.
+      if (!plan?.url || !Array.isArray(plan.corners) || plan.corners.length < 4) continue;
 
       const texture = await this.texture(plan.url);
       if (!texture) continue;

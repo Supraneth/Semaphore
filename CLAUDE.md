@@ -43,6 +43,7 @@ dépendance runtime.
 | Fichier | Rôle |
 |---|---|
 | `src/types.ts` | schéma de config Lovelace + modèle runtime |
+| `src/config.ts` | validation de la config, messages nommant l'entrée fautive |
 | `src/geo.ts` | plan tangent local en mètres (`LocalFrame`) |
 | `src/fov.ts` | isovist avec occlusions |
 | `src/homography.ts` | DLT 4 points, bbox Frigate → position au sol |
@@ -93,6 +94,12 @@ c'est probablement le changement qui a tort.
 
 8. **Aimantation à 45 cm** entre sommets dans l'éditeur. Sans elle, deux pièces
    voisines laissent une fente par laquelle une caméra voit à travers le bâtiment.
+
+9. **La config est validée avant d'être touchée.** Elle vient d'un humain qui
+   tape du YAML : un champ manquera. `validateConfig` échoue en nommant l'entrée
+   et le champ fautifs. Ne jamais laisser une valeur non validée atteindre le
+   moteur — le symptôme est une `TypeError` au-dessus d'une carte vide, qui
+   n'apprend rien à personne.
 
 ## Conventions
 
