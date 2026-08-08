@@ -53,6 +53,21 @@ export function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, alpha)).toFixed(3)})`;
 }
 
+/**
+ * Blends `over` onto `base`, `t` of the way.
+ *
+ * Solid geometry is shaded by *colour*, never by opacity. A wall face at 70 %
+ * alpha shows the floor and the coverage through it, which is exactly what
+ * makes a house look like a stack of glass boxes instead of a building.
+ */
+export function mix(base: string, over: string, t: number): string {
+  const [r0, g0, b0] = hexRgb(base);
+  const [r1, g1, b1] = hexRgb(over);
+  const k = Math.max(0, Math.min(1, t));
+  const at = (a: number, b: number): number => Math.round(a + (b - a) * k);
+  return `rgb(${at(r0, r1)}, ${at(g0, g1)}, ${at(b0, b1)})`;
+}
+
 export interface StateStyle {
   css: string;
   /** Base alpha of the sector fill. */

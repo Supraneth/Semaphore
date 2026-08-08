@@ -272,6 +272,31 @@ export const styles = css`
     padding: 4px 8px;
     font-size: 12px;
   }
+  .chips input[type='color'] {
+    width: 30px;
+    height: 26px;
+    padding: 2px;
+    background: ${sunk};
+    cursor: pointer;
+  }
+
+  /* A colour is its own label — a name for it would be a worse one. */
+  button.swatch {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: var(--swatch);
+    border: 1px solid var(--line);
+  }
+  button.swatch:hover:not(:disabled) {
+    background: var(--swatch);
+    filter: brightness(1.15);
+  }
+  button.swatch[aria-pressed='true'] {
+    background: var(--swatch);
+    border-color: ${parchment};
+    box-shadow: 0 0 0 2px ${ink}, 0 0 0 3px ${parchment};
+  }
 
   .list {
     display: flex;

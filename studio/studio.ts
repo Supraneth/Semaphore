@@ -4,10 +4,11 @@ import { repeat } from 'lit/directives/repeat.js';
 import type { CameraConfig, Level, SemaphoreConfig } from '../src/types';
 import { Scene } from '../src/plan/scene';
 import { VIEW_PRESETS, presetOf, type ViewPreset } from '../src/plan/view';
-import type { PlanEditor, Tool } from '../src/plan/editor';
+import { PlanEditor, type Tool } from '../src/plan/editor';
 import { area, dist, findWall } from '../src/plan/geometry';
 import { formatArea, formatMetres } from '../src/plan/snap';
 import { isovistCoverage } from '../src/fov';
+import { CHART } from '../src/theme';
 import { cardYaml, copyToClipboard } from '../src/plan/yaml';
 import { validateConfig } from '../src/config';
 import {
@@ -77,6 +78,15 @@ const SNAP_LABELS: Record<string, string> = {
 
 const GRID_PRESETS = [0.1, 0.25, 0.5, 1];
 
+/** The chart palette, offered first — a custom colour should be a choice. */
+const SWATCHES: Array<[string, string]> = [
+  [CHART.sectorWhite, 'Blanc de secteur'],
+  [CHART.buoyYellow, 'Jaune de balise'],
+  [CHART.sectorRed, 'Rouge de secteur'],
+  [CHART.sectorGreen, 'Vert de secteur'],
+  [CHART.slate, 'Ardoise'],
+];
+
 @customElement('semaphore-studio')
 export class SemaphoreStudio extends LitElement {
   static override styles = styles;
@@ -84,7 +94,6 @@ export class SemaphoreStudio extends LitElement {
   @state() private config: SemaphoreConfig = blankProject();
   @state() private activeLevel = 'rdc';
   @state() private tool: Tool = 'select';
-  @state() private showGrid = true;
   @state() private exploded = false;
   @state() private dialog: 'import' | 'export' | null = null;
   @state() private importText = '';
@@ -158,17 +167,62 @@ export class SemaphoreStudio extends LitElement {
       scene.view.refresh();
     }
     scene.activeLevel = this.activeLevel;
-    scene.showGrid = this.showGrid;
     scene.init(stage);
 
     this.scene = scene;
-    this.editor = scene.enableEditor(() => this.changed());
+    // The editor lives here, not in `Scene`: a dashboard card should not carry
+    // a drawing tool it never opens. `activeLevel` and `grid` are read live so
+    // switching storey or grid size mid-gesture takes effect at once.
+    const studio = this;
+    this.editor = new PlanEditor(scene.canvas, scene.renderer, {
+      levels: checked.levels,
+      cameras: checked.cameras,
+      get activeLevel(): string {
+        return studio.activeLevel;
+      },
+      get grid(): number {
+        return studio.config.grid ?? 0.5;
+      },
+      onChange: (): void => {
+        scene.documentChanged();
+        this.changed();
+      },
+      onRepaint: (): void => scene.invalidate(),
+    });
+    this.editor.attach();
+    scene.setEditing(true);
+    scene.overlay = () => this.drawOverlay();
     this.editor.setTool(this.tool);
     this.problem = '';
     // Queued, not flushed: the first boot runs inside `firstUpdated`, and
     // writing reactive state from there schedules a second update on top of
     // the one still finishing.
     this.queueSave();
+  }
+
+  /**
+   * Everything that only exists while editing, painted after the scene.
+   *
+   * The gizmos used to live in `Scene` alongside the editor. Moving both out is
+   * what keeps `PlanEditor` from being pulled into the card's bundle by a
+   * single reference it never reaches.
+   */
+  private drawOverlay(): void {
+    const scene = this.scene;
+    const editor = this.editor;
+    if (!scene || !editor) return;
+
+    editor.drawOverlay();
+    const selection = editor.selection;
+    const first = this.config.levels[0]?.id;
+    for (const rt of scene.runtimes_()) {
+      if ((rt.config.level ?? first) !== this.activeLevel) continue;
+      scene.renderer.drawCameraGizmo(
+        rt,
+        scene.floorZ(rt.config),
+        selection?.kind === 'camera' && selection.id === rt.config.name,
+      );
+    }
   }
 
   /** One place for "the document changed": re-render, and remember it. */
@@ -312,19 +366,39 @@ export class SemaphoreStudio extends LitElement {
     this.requestUpdate();
   }
 
-  private toggleGrid(): void {
-    this.showGrid = !this.showGrid;
-    if (this.scene) {
-      this.scene.showGrid = this.showGrid;
-      this.scene.invalidate();
-    }
+  /**
+   * Grid, labels and floor opacity live in the config, not in the editor.
+   *
+   * A grid that is only ever switched off here would be back the moment the
+   * plan reached Home Assistant. These are decisions about how the scene looks,
+   * so they travel with it.
+   */
+  private toggleFlag(key: 'show-grid' | 'show-labels'): void {
+    this.write(key, this.config[key] === false);
+  }
+
+  /**
+   * Writes a top-level option **in place**.
+   *
+   * `Scene` captured this exact object when it was built and reads the grid
+   * spacing, the flags and the floor opacity straight off it every frame.
+   * Replacing `this.config` with a spread copy — the reflex, with Lit state —
+   * leaves the renderer holding the old object: the panel shows the new value
+   * and the canvas never changes. Lit is told separately, by hand.
+   */
+  private write(key: string, value: unknown): void {
+    const target = this.config as unknown as Record<string, unknown>;
+    // Removing a key means "use the default", which is not the same as zero.
+    if (value === undefined) delete target[key];
+    else target[key] = value;
+    this.scene?.invalidate();
+    this.queueSave();
+    this.requestUpdate();
   }
 
   private setGrid(value: number): void {
     if (!(value > 0)) return;
-    this.config = { ...this.config, grid: value };
-    this.scene?.invalidate();
-    this.queueSave();
+    this.write('grid', value);
   }
 
   /** Freezes the current camera as the card's opening view. */
@@ -332,19 +406,16 @@ export class SemaphoreStudio extends LitElement {
     const view = this.scene?.view;
     if (!view) return;
     const shot = view.snapshot();
-    this.config = {
-      ...this.config,
-      view: { yaw: shot.yaw, pitch: shot.pitch, zoom: shot.zoom, center: shot.center },
-    };
-    this.queueSave();
-    this.requestUpdate();
+    this.write('view', {
+      yaw: shot.yaw,
+      pitch: shot.pitch,
+      zoom: shot.zoom,
+      center: shot.center,
+    });
   }
 
   private forgetView(): void {
-    const { view: _dropped, ...rest } = this.config;
-    this.config = rest as SemaphoreConfig;
-    this.queueSave();
-    this.requestUpdate();
+    this.write('view', undefined);
   }
 
   // ---- levels -------------------------------------------------------------
@@ -502,7 +573,10 @@ export class SemaphoreStudio extends LitElement {
         </button>
         <hr />
         <button @click=${() => this.scene?.frame()}>Tout cadrer</button>
-        <button aria-pressed=${this.showGrid} @click=${this.toggleGrid}>Grille</button>
+        <button
+          aria-pressed=${this.config['show-grid'] !== false}
+          @click=${() => this.toggleFlag('show-grid')}
+        >Grille</button>
       </aside>
     `;
   }
@@ -640,6 +714,7 @@ export class SemaphoreStudio extends LitElement {
             @change=${(e: Event) => this.editor?.rename((e.target as HTMLInputElement).value)}
           />
         </div>
+        ${this.colourRow('Couleur du sol', room.color, (value) => this.set('color', value))}
         <div class="chips">
           <button
             title="Pose un mur sur chaque côté du contour, sans doublon."
@@ -727,11 +802,57 @@ export class SemaphoreStudio extends LitElement {
             : html`Couverture réelle : <strong>${coverage} %</strong> du secteur théorique —
                 le reste est derrière un mur.`}
         </p>
+        ${this.colourRow(
+          'Couleur au repos',
+          cam.color,
+          (value) => this.set('color', value),
+          'Seul le secteur au repos change. Mouvement, détection, flux dégradé et hors ligne gardent la palette : ces couleurs-là sont la légende.',
+        )}
         ${this.problem ? html`<p class="problem">${this.problem}</p>` : nothing}
         <div class="chips">
           <button class="danger" @click=${() => this.deleteSelection()}>Supprimer</button>
         </div>
       </section>
+    `;
+  }
+
+  /**
+   * A swatch row plus a free picker.
+   *
+   * The swatches are the chart palette, so the obvious choices are the ones
+   * that already belong to the scene; the picker is there for the case the
+   * palette does not cover, and "Défaut" is what makes the override undoable
+   * without knowing what the original value was.
+   */
+  private colourRow(
+    label: string,
+    current: string | undefined,
+    apply: (value: string) => void,
+    note?: string,
+  ): TemplateResult {
+    return html`
+      <div class="row wide">
+        <label>${label}</label>
+        <div class="chips">
+          ${SWATCHES.map(
+            ([hex, name]) => html`<button
+              class="swatch"
+              title=${name}
+              aria-pressed=${current?.toLowerCase() === hex.toLowerCase()}
+              style="--swatch:${hex}"
+              @click=${() => apply(hex)}
+            ></button>`,
+          )}
+          <input
+            type="color"
+            title="Couleur libre"
+            .value=${current ?? '#F4E7BE'}
+            @change=${(e: Event) => apply((e.target as HTMLInputElement).value)}
+          />
+          <button ?disabled=${!current} @click=${() => apply('')}>Défaut</button>
+        </div>
+        ${note ? html`<p class="note">${note}</p>` : nothing}
+      </div>
     `;
   }
 
@@ -866,6 +987,30 @@ export class SemaphoreStudio extends LitElement {
               >Séparer</button>`
             : nothing}
         </div>
+        <div class="chips" style="margin-top:8px">
+          <button
+            aria-pressed=${this.config['show-grid'] !== false}
+            title="Le quadrillage au sol. Utile pour tracer, encombrant pour lire."
+            @click=${() => this.toggleFlag('show-grid')}
+          >Grille</button>
+          <button
+            aria-pressed=${this.config['show-labels'] !== false}
+            title="Nom et surface au centre de chaque pièce."
+            @click=${() => this.toggleFlag('show-labels')}
+          >Libellés</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label>Opacité des sols</label>
+          <input
+            type="number"
+            step="0.05"
+            min="0"
+            max="1"
+            .value=${String(this.config['floor-opacity'] ?? 0.1)}
+            @change=${(e: Event) =>
+              this.write('floor-opacity', clamp01(+(e.target as HTMLInputElement).value))}
+          />
+        </div>
         <div class="row" style="margin-top:8px">
           <label>Pas de la grille</label>
           <input
@@ -922,17 +1067,11 @@ export class SemaphoreStudio extends LitElement {
 
   private setOption(key: keyof SemaphoreConfig, raw: string, type: 'text' | 'number'): void {
     const text = raw.trim();
-    const next = { ...this.config } as Record<string, unknown>;
     // An emptied field means "use the default", not "set it to zero".
-    if (!text) delete next[key];
-    else if (type === 'number') {
-      const n = parseFloat(text.replace(',', '.'));
-      if (!isFinite(n)) return;
-      next[key] = n;
-    } else next[key] = text;
-    this.config = next as unknown as SemaphoreConfig;
-    this.queueSave();
-    this.requestUpdate();
+    if (!text) return this.write(key, undefined);
+    if (type !== 'number') return this.write(key, text);
+    const n = parseFloat(text.replace(',', '.'));
+    if (isFinite(n)) this.write(key, n);
   }
 
   private renderCardOptions(): TemplateResult {
@@ -977,18 +1116,11 @@ export class SemaphoreStudio extends LitElement {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const next = { ...this.config } as Record<string, unknown>;
-    if (labels.length) next['alert-labels'] = labels;
-    else delete next['alert-labels'];
-    this.config = next as unknown as SemaphoreConfig;
-    this.queueSave();
-    this.requestUpdate();
+    this.write('alert-labels', labels.length ? labels : undefined);
   }
 
   private setBoxFormat(value: string): void {
-    this.config = { ...this.config, 'box-format': value as SemaphoreConfig['box-format'] };
-    this.queueSave();
-    this.requestUpdate();
+    this.write('box-format', value);
   }
 
   private renderChecks(): TemplateResult {
@@ -1104,6 +1236,7 @@ export class SemaphoreStudio extends LitElement {
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+const clamp01 = (n: number): number => (isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.1);
 
 function uniqueId(taken: string[], base: string): string {
   if (!taken.includes(base)) return base;

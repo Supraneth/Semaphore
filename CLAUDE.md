@@ -19,7 +19,12 @@ Complet et exécuté — mais jamais dans un vrai Home Assistant.
 Vérifié mécaniquement :
 
 - `tsc --noEmit` strict passe, `vite build` produit `dist/semaphore.js`
-  (~41 kB gzip — plus aucune dépendance runtime hors Lit).
+  (~33 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur).
+- **La carte se manipule** : glisser pivote, molette et pincement zooment, le
+  pincement ne fait pas tourner, et plus aucun préréglage ne s'attribue un angle
+  trouvé à la main. Vérifié en pilotant de vrais événements souris et tactiles.
+- Les murs sont opaques : le dessus d'un mur mesure exactement `#EFE7D4`.
+- Une couleur par caméra teinte bien le secteur au repos.
 - **L'éditeur autonome tourne**, piloté en Chromium headless via CDP : tracé
   d'une chaîne de murs, longueur au clavier, annuler/refaire, pose puis
   annulation d'une caméra, ajout et duplication de niveau (identifiants tous
@@ -68,6 +73,7 @@ coûtait 310 kB gzip.
 | `src/frigate.ts` | souscription MQTT, suivi des détections, URLs média |
 | `src/theme.ts` | palette carte marine, styles d'état, tempos |
 | `src/plan/view.ts` | caméra 2.5D orthographique, `project` / `unproject` exacts, `VIEW_PRESETS` |
+| `src/plan/controls.ts` | pivoter, zoomer, déplacer hors édition — souris et tactile |
 | `src/plan/geometry.ts` | murs → faces et → occultants, ouvertures, aires |
 | `src/plan/renderer.ts` | tout le rendu, Canvas 2D, algorithme du peintre |
 | `src/plan/editor.ts` | outils, accrochage, saisie clavier, glisser-déposer |
@@ -86,6 +92,12 @@ coûtait 310 kB gzip.
 `studio/` et `dev/` ne sont **jamais** dans `dist/semaphore.js` : `vite build`
 part de `src/semaphore-card.ts` et rien d'autre. C'est ce qui autorise l'éditeur
 à être aussi bavard qu'il le faut sans peser sur la carte.
+
+`src/plan/editor.ts`, `snap.ts` et `history.ts` non plus : **la carte n'a pas de
+mode édition** et `Scene` ne construit pas le `PlanEditor` — c'est `studio/` qui
+l'instancie et qui rend l'overlay, via `Scene.setEditing()` et `Scene.overlay`.
+Une seule référence depuis `scene.ts` suffirait à retomber dans le bundle. Le
+bundle est passé de 42 à 33 kB gzip le jour où elle a disparu.
 
 ## Invariants à ne pas casser
 
@@ -139,23 +151,23 @@ c'est probablement le changement qui a tort.
     ne couvrait que les niveaux, poser ou supprimer une caméra empilait un point
     de restauration qui restaurait tout sauf la caméra.
 
-14. **L'éditeur autonome ne duplique aucune logique d'édition.** Il instancie le
-    même `Scene` et le même `PlanEditor` que la carte. Toute correction faite
-    d'un côté doit profiter à l'autre — si une fonctionnalité ne peut exister
-    que dans l'éditeur, elle passe par un champ de `setField` ou par
-    `PlanEditor.edit()`, jamais par une seconde implémentation.
+12. **L'éditeur autonome ne duplique aucun rendu.** Il instancie le même `Scene`
+    et le même `Renderer` que la carte : ce qu'il montre est ce que la carte
+    dessinera, sans quoi l'export ne vaut rien. L'édition, elle, n'existe que
+    là — toute nouvelle capacité passe par un champ de `PlanEditor.setField` ou
+    par `PlanEditor.edit()`, jamais par une seconde implémentation.
 
-15. **Ce que l'éditeur écrit, il doit savoir le relire.** `cardYaml` →
+13. **Ce que l'éditeur écrit, il doit savoir le relire.** `cardYaml` →
     `parseYaml` → `validateConfig` est un point fixe, vérifié : géométrie,
     caméras et options identiques après un aller-retour, et un deuxième
     aller-retour produit exactement le même texte. Un changement du writer sans
     changement du reader est un bug qui ne se voit qu'à la réouverture.
 
-12. **La config est validée avant d'être touchée.** `validateConfig` échoue en
+14. **La config est validée avant d'être touchée.** `validateConfig` échoue en
     nommant l'entrée et le champ fautifs. Une `TypeError` au-dessus d'une carte
     vide n'apprend rien à personne.
 
-13. **Tout changement de pitch ou d'éclatement recadre.** Aplatir une vue à 45°
+15. **Tout changement de pitch ou d'éclatement recadre.** Aplatir une vue à 45°
     rend la scène 40 % plus haute à l'écran ; séparer les étages y ajoute
     plusieurs mètres. Sans recadrage, le bâtiment quitte le canvas.
     Corollaire : **le premier cadrage a lieu à la première mesure non nulle du
@@ -173,7 +185,25 @@ c'est probablement le changement qui a tort.
     Le plan, lui, doit rester dans l'axe, sans quoi la grille cesse d'être une
     règle.
 
-17. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
+17. **La maçonnerie est opaque ; l'alpha ne représente jamais la matière.** Une
+    face de mur translucide laisse voir le sol et la couverture au travers et la
+    maison se lit comme une pile de boîtes en verre. L'ombrage passe donc par
+    `mix()` vers l'encre, pas par `withAlpha`. L'alpha ne sert qu'à estomper un
+    étage qui n'est pas l'étage actif.
+
+18. **La carte se manipule sans mode.** Glisser pivote, molette et pincement
+    zooment. `ViewControls` est attaché par `Scene` tant que rien n'édite.
+    Un tableau de bord se lit sur un téléphone : toute interaction réservée au
+    clic droit n'existe pas. Et dès que l'utilisateur tourne à la main, plus
+    aucun préréglage ne se déclare actif — un bouton qui prétend décrire un
+    angle qu'il ne décrit pas est pire que pas de bouton.
+
+19. **Une couleur personnalisée ne remplace que l'état de repos.** Les quatre
+    autres états gardent la palette : ce sont eux la légende. Un rouge qui
+    voudrait dire « caméra du salon » sur une caméra et « quelqu'un est là » sur
+    une autre détruit la seule chose que la palette apportait.
+
+20. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
     est dessiné comme une seule silhouette — objectif, puis le pourtour de
     l'isovist dans l'ordre, fermé. Une seule passe : cent triangles translucides
     partageant des arêtes se composeraient en bandes. Ne pas fabriquer une
@@ -269,3 +299,9 @@ HA ne peut trancher. Chacun a un repli qui évite que l'échec soit fatal.
 - Les chips de caméra (DOM) peuvent recouvrir les libellés de pièce (canvas).
   Aucune détection de collision entre les deux calques.
 - Le mode focus recadre la vue mais ne la restaure pas en sortant.
+- Sur mobile, la scène capte le glissé à un doigt : on ne peut pas faire défiler
+  le tableau de bord en partant de la carte. `touch-action: none` était déjà là
+  avant que le geste serve à quelque chose, donc rien n'a régressé — mais un
+  doigt qui fait défiler et deux qui pivotent serait plus poli.
+- L'angle trouvé à la main n'est pas mémorisé : recharger la page remet la vue
+  de la config.

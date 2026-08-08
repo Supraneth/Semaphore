@@ -11,7 +11,7 @@ import { computeIsovist, type Segment } from '../fov';
 import { STATE_STYLES } from '../theme';
 import { Renderer } from './renderer';
 import { DEFAULT_VIEW, View, type ViewPreset } from './view';
-import { PlanEditor } from './editor';
+import { ViewControls } from './controls';
 import { allPoints, occludersFor } from './geometry';
 
 /**
@@ -26,13 +26,26 @@ import { allPoints, occludersFor } from './geometry';
 export interface SceneCallbacks {
   onFrame: () => void;
   onIdleChange: (idle: boolean) => void;
+  /** The user turned or zoomed the scene themselves. */
+  onViewMoved?: () => void;
 }
 
 export class Scene {
   readonly view: View;
   readonly renderer: Renderer;
-  editor?: PlanEditor;
 
+  /**
+   * True while something outside owns the canvas — the standalone editor.
+   *
+   * The editor is deliberately not built here. A card on a dashboard should not
+   * carry a drawing tool it never opens, and keeping `PlanEditor` out of this
+   * file is what lets it fall out of the card's bundle entirely.
+   */
+  editing = false;
+  /** Painted after the scene each frame, by whoever is editing. */
+  overlay?: () => void;
+
+  private controls?: ViewControls;
   private runtimes = new Map<string, CameraRuntime>();
   private occluders = new Map<string, Segment[]>();
   private detections: Detection[] = [];
@@ -55,7 +68,7 @@ export class Scene {
   private resizeObserver?: ResizeObserver;
 
   constructor(
-    private canvas: HTMLCanvasElement,
+    readonly canvas: HTMLCanvasElement,
     private config: SemaphoreConfig,
     private cb: SceneCallbacks,
   ) {
@@ -108,6 +121,14 @@ export class Scene {
     this.resizeObserver = new ResizeObserver(measure);
     this.resizeObserver.observe(host);
 
+    this.controls = new ViewControls(this.canvas, this.view, {
+      onChange: () => {
+        this.noteInteraction();
+        this.cb.onViewMoved?.();
+      },
+    });
+    if (!this.editing) this.controls.attach();
+
     this.rebuildOccluders();
     this.start();
   }
@@ -115,7 +136,7 @@ export class Scene {
   destroy(): void {
     cancelAnimationFrame(this.raf);
     this.resizeObserver?.disconnect();
-    this.editor?.detach();
+    this.controls?.detach();
   }
 
   setPaused(paused: boolean): void {
@@ -274,44 +295,26 @@ export class Scene {
     this.dirtyFrame = true;
   }
 
-  // ---- editor -------------------------------------------------------------
+  // ---- editing ------------------------------------------------------------
 
-  enableEditor(onChange: () => void): PlanEditor {
-    if (this.editor) return this.editor;
-
-    const scene = this;
-    // `activeLevel` and `grid` are read live rather than copied, so switching
-    // storey or grid size while the editor is open takes effect at once.
-    const host = {
-      levels: this.config.levels,
-      cameras: this.config.cameras,
-      get activeLevel(): string {
-        return scene.activeLevel;
-      },
-      get grid(): number {
-        return scene.config.grid ?? 0.5;
-      },
-      onChange: (): void => {
-        this.rebuildOccluders();
-        this.syncCameras();
-        onChange();
-      },
-      onRepaint: (): void => this.invalidate(),
-    };
-
-    this.editor = new PlanEditor(this.canvas, this.renderer, host);
-    this.editor.attach();
-    return this.editor;
-  }
-
-  disableEditor(): void {
-    this.editor?.detach();
-    this.editor = undefined;
+  /** Hands the canvas to an external editor, or takes it back. */
+  setEditing(editing: boolean): void {
+    this.editing = editing;
+    if (editing) this.controls?.detach();
+    else this.controls?.attach();
     this.invalidate();
   }
 
-  get editing(): boolean {
-    return !!this.editor;
+  /** Height of the floor a camera hangs over, exploded storeys included. */
+  floorZ(cam: CameraConfig): number {
+    const level = this.levelOf(cam);
+    return (level?.elevation ?? 0) + this.explode * Math.max(0, this.config.levels.indexOf(level));
+  }
+
+  /** Called by the editor once it has changed the document. */
+  documentChanged(): void {
+    this.rebuildOccluders();
+    this.syncCameras();
   }
 
   // ---- render loop --------------------------------------------------------
@@ -367,25 +370,20 @@ export class Scene {
       time: this.frozenTime ?? (performance.now() - this.started) / 1000,
       grid: this.config.grid ?? 0.5,
       focusCamera: this.focusCamera,
-      showGrid: this.showGrid,
+      showGrid: this.showGrid && this.config['show-grid'] !== false,
+      showLabels: this.config['show-labels'] !== false,
+      floorOpacity: this.config['floor-opacity'] ?? 0.1,
       reducedMotion: this.reducedMotion,
       explode: this.explode,
       editing: this.editing,
     });
 
-    if (this.editor) {
-      this.editor.drawOverlay();
-      const selection = this.editor.selection;
-      for (const rt of this.runtimes.values()) {
-        if ((rt.config.level ?? this.config.levels[0]?.id) !== this.activeLevel) continue;
-        const z = this.levelOf(rt.config)?.elevation ?? 0;
-        this.renderer.drawCameraGizmo(
-          rt,
-          z,
-          selection?.kind === 'camera' && selection.id === rt.config.name,
-        );
-      }
-    }
+    if (this.editing) this.overlay?.();
+  }
+
+  /** Every runtime, for an editor that needs to draw its own gizmos. */
+  runtimes_(): CameraRuntime[] {
+    return [...this.runtimes.values()];
   }
 
   /** Screen position of a camera, for the DOM chip overlay. */

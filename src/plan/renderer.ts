@@ -1,5 +1,5 @@
 import type { CameraRuntime, Detection, Level, Point } from '../types';
-import { CHART, STATE_STYLES, labelCss, withAlpha } from '../theme';
+import { CHART, STATE_STYLES, labelCss, mix, withAlpha } from '../theme';
 import { View } from './view';
 import {
   DEFAULT_MOUNT_HEIGHT,
@@ -42,6 +42,10 @@ export interface RenderInput {
   /** Flattens everything but the active level. */
   focusCamera: string | null;
   showGrid: boolean;
+  /** Room names and areas. */
+  showLabels: boolean;
+  /** Opacity of the floor slabs. */
+  floorOpacity: number;
   reducedMotion: boolean;
   /** Storey separation in metres. 0 stacks them. */
   explode: number;
@@ -115,7 +119,7 @@ export class Renderer {
       const z = this.levelZ(level, index, input);
       const dim = level.id === input.activeLevel ? 1 : 0.45;
       this.drawUnderlay(level, z, dim);
-      this.drawFloors(level, z, dim);
+      this.drawFloors(level, z, dim, input.floorOpacity);
     }
 
     // Coverage sits just above the floor of its own storey, and only on a
@@ -131,8 +135,10 @@ export class Renderer {
       this.drawWalls(level, z, level.id === input.activeLevel ? 1 : 0.45);
     }
 
-    for (const { level, index } of shown) {
-      this.drawRoomLabels(level, this.levelZ(level, index, input));
+    if (input.showLabels) {
+      for (const { level, index } of shown) {
+        this.drawRoomLabels(level, this.levelZ(level, index, input));
+      }
     }
 
     // Last, over the walls: the mast is an annotation, and it has to reach the
@@ -294,7 +300,7 @@ export class Renderer {
 
   // ---- floors -------------------------------------------------------------
 
-  private drawFloors(level: Level, z: number, dim: number): void {
+  private drawFloors(level: Level, z: number, dim: number, opacity: number): void {
     const { ctx, view } = this;
     const rooms = [...(level.rooms ?? [])].sort(
       (a, b) => this.ringDepth(b.ring) - this.ringDepth(a.ring),
@@ -308,9 +314,9 @@ export class Renderer {
         else ctx.lineTo(s[0], s[1]);
       });
       ctx.closePath();
-      ctx.fillStyle = withAlpha(room.color ?? CHART.parchment, 0.1 * dim);
+      ctx.fillStyle = withAlpha(room.color ?? CHART.parchment, opacity * dim);
       ctx.fill();
-      ctx.strokeStyle = withAlpha(CHART.parchment, 0.22 * dim);
+      ctx.strokeStyle = withAlpha(room.color ?? CHART.parchment, 0.22 * dim);
       ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -429,13 +435,17 @@ export class Renderer {
 
     const faces: Face[] = [];
     const view = this.view;
+    // Masonry is opaque. Alpha is spent only on de-emphasising a storey that is
+    // not the active one — never on the material itself, or the floor and the
+    // coverage show through and the house reads as glass.
+    const solid = (colour: string): string => (dim >= 1 ? colour : withAlpha(colour, dim));
 
     // The top, always visible from above.
     faces.push({
       points: ring,
       z: ring.map(() => z1),
-      fill: withAlpha(CHART.parchment, 0.9 * dim),
-      stroke: withAlpha(CHART.ink, 0.5 * dim),
+      fill: solid(CHART.parchment),
+      stroke: solid(mix(CHART.parchment, CHART.ink, 0.45)),
       depth: Math.min(...ring.map((p) => view.depth(p[0], p[1]))),
     });
 
@@ -450,12 +460,13 @@ export class Renderer {
       const outward: Point = [q[1] - p[1], -(q[0] - p[0])];
       if (outward[0] * viewDir[0] + outward[1] * viewDir[1] >= 0) continue;
       // Faces more edge-on to the light read darker, which is the whole of the
-      // shading model and enough to make corners legible.
-      const shade = 0.55 + 0.3 * Math.abs(normalise(outward)[1]);
+      // shading model and enough to make corners legible. Darkening toward the
+      // ink rather than fading toward it keeps the face solid.
+      const light = 0.55 + 0.3 * Math.abs(normalise(outward)[1]);
       faces.push({
         points: [p, q, q, p],
         z: [z0, z0, z1, z1],
-        fill: withAlpha(CHART.parchmentShade, shade * dim),
+        fill: solid(mix(CHART.ink, CHART.parchmentShade, light)),
         depth: Math.min(view.depth(p[0], p[1]), view.depth(q[0], q[1])),
       });
     }
@@ -476,6 +487,7 @@ export class Renderer {
 
     const { ctx, view } = this;
     const style = STATE_STYLES[rt.state];
+    const css = sectorColour(rt);
     const focused = input.focusCamera;
     let dim = !visible ? 0.12 : focused && focused !== rt.config.name ? 0.22 : 1;
     // Coverage is the point of the card at rest and an obstacle while drawing:
@@ -496,19 +508,19 @@ export class Renderer {
     // scale uniform, so one gradient is correct across the whole polygon.
     const radiusPixels = rt.config.range * view.zoom;
     const gradient = ctx.createRadialGradient(apex[0], apex[1], 0, apex[0], apex[1], radiusPixels);
-    gradient.addColorStop(0, withAlpha(style.css, style.intensity * 1.5 * dim));
-    gradient.addColorStop(0.55, withAlpha(style.css, style.intensity * 0.8 * dim));
-    gradient.addColorStop(1, withAlpha(style.css, 0));
+    gradient.addColorStop(0, withAlpha(css, style.intensity * 1.5 * dim));
+    gradient.addColorStop(0.55, withAlpha(css, style.intensity * 0.8 * dim));
+    gradient.addColorStop(1, withAlpha(css, 0));
 
     ctx.fillStyle = gradient;
     ctx.fill(path);
 
-    ctx.strokeStyle = withAlpha(style.css, 0.5 * dim);
+    ctx.strokeStyle = withAlpha(css, 0.5 * dim);
     ctx.lineWidth = 1;
     ctx.stroke(path);
 
     if (style.sweep > 0 && !input.reducedMotion && visible) {
-      this.drawSweep(path, apex, radiusPixels, style.css, style.sweep, input.time, dim);
+      this.drawSweep(path, apex, radiusPixels, css, style.sweep, input.time, dim);
     }
 
     this.drawSectorVolume(rt, z, lensZ, dim);
@@ -556,15 +568,16 @@ export class Renderer {
     // floor, where the sector pool takes over. The axis is the vertical rise,
     // so anything past the ground clamps to the last stop.
     const style = STATE_STYLES[rt.state];
+    const css = sectorColour(rt);
     const gradient = ctx.createLinearGradient(lens[0], lens[1], ground[0], ground[1]);
-    gradient.addColorStop(0, withAlpha(style.css, style.intensity * 0.55 * dim));
-    gradient.addColorStop(1, withAlpha(style.css, style.intensity * 0.07 * dim));
+    gradient.addColorStop(0, withAlpha(css, style.intensity * 0.55 * dim));
+    gradient.addColorStop(1, withAlpha(css, style.intensity * 0.07 * dim));
     ctx.fillStyle = gradient;
     ctx.fill(path);
 
     // The two extreme rays. Without them a cone reads as a smear; with them the
     // eye finds the apex immediately.
-    ctx.strokeStyle = withAlpha(style.css, 0.3 * dim);
+    ctx.strokeStyle = withAlpha(css, 0.3 * dim);
     ctx.lineWidth = 1;
     for (const end of [first, last]) {
       ctx.beginPath();
@@ -587,10 +600,10 @@ export class Renderer {
     const lens = view.projectPoint(rt.config.position, lensZ);
     if (ground[1] - lens[1] < 4) return;
 
-    const style = STATE_STYLES[rt.state];
+    const css = sectorColour(rt);
     ctx.save();
     ctx.setLineDash([3, 3]);
-    ctx.strokeStyle = withAlpha(style.css, 0.5 * dim);
+    ctx.strokeStyle = withAlpha(css, 0.5 * dim);
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(ground[0], ground[1]);
@@ -603,7 +616,7 @@ export class Renderer {
     const squash = Math.cos((view.pitch * Math.PI) / 180);
     ctx.beginPath();
     ctx.ellipse(ground[0], ground[1], 4, Math.max(0.5, 4 * squash), 0, 0, Math.PI * 2);
-    ctx.fillStyle = withAlpha(style.css, 0.55 * dim);
+    ctx.fillStyle = withAlpha(css, 0.55 * dim);
     ctx.fill();
   }
 
@@ -832,6 +845,20 @@ export class Renderer {
 }
 
 const mountHeight = (rt: CameraRuntime): number => rt.config.height ?? DEFAULT_MOUNT_HEIGHT;
+
+/**
+ * The colour a camera's sector is painted in.
+ *
+ * A per-camera colour replaces the *resting* colour and nothing else. The other
+ * four states keep the chart palette, because those colours are the legend: a
+ * red sector has to mean "something is in there" on every camera, or it means
+ * nothing anywhere. What the override buys is telling four quiet cameras apart.
+ */
+function sectorColour(rt: CameraRuntime): string {
+  return rt.state === 'nominal' && rt.config.color
+    ? rt.config.color
+    : STATE_STYLES[rt.state].css;
+}
 
 export function pointOnBearing(from: Point, bearingDeg: number, metres: number): Point {
   const t = (bearingDeg * Math.PI) / 180;

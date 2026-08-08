@@ -849,6 +849,12 @@ export class PlanEditor {
       if (field === 'blocksSight') opening.blocksSight = !opening.blocksSight;
     }
 
+    if (sel.kind === 'room' && field === 'color' && typeof value === 'string') {
+      const room = this.findRoom(sel.id);
+      // An empty string means "back to the level's colour", not "black".
+      if (room) room.color = value.trim() || undefined;
+    }
+
     if (sel.kind === 'camera') {
       const cam = this.findCamera(sel.id);
       if (!cam) return;
@@ -878,6 +884,7 @@ export class PlanEditor {
           }
         }
         if (field === 'entity') cam.entity = value.trim() || undefined;
+        if (field === 'color') cam.color = value.trim() || undefined;
         if (field === 'level' && this.host.levels.some((l) => l.id === value)) cam.level = value;
       }
     }

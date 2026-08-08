@@ -147,6 +147,14 @@ function planBody(
 
   return {
     grid: config.grid,
+    // Only when they differ from the default: a config that repeats every
+    // default back at you is one nobody reads twice.
+    'show-grid': config['show-grid'] === false ? false : undefined,
+    'show-labels': config['show-labels'] === false ? false : undefined,
+    'floor-opacity':
+      config['floor-opacity'] !== undefined && Math.abs(config['floor-opacity'] - 0.1) > 1e-6
+        ? round(config['floor-opacity'], 2)
+        : undefined,
     view:
       options.view && config.view
         ? {
@@ -192,7 +200,7 @@ function planBody(
           }))
         : undefined,
       rooms: l.rooms?.length
-        ? l.rooms.map((r) => ({ id: r.id, name: r.name, ring: r.ring.map(pt) }))
+        ? l.rooms.map((r) => ({ id: r.id, name: r.name, color: r.color, ring: r.ring.map(pt) }))
         : undefined,
     })),
     cameras: config.cameras.map((c) => ({
@@ -205,6 +213,7 @@ function planBody(
       fov: Math.round(c.fov),
       range: round(c.range, 1),
       entity: c.entity,
+      color: c.color,
       resolution: c.resolution,
       calibration: c.calibration
         ? { image: c.calibration.image, ground: c.calibration.ground.map(pt) }

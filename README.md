@@ -80,7 +80,12 @@ réglage d'inclinaison.
 
 Une maison fait quelques centaines de polygones. Le GPU n'apportait rien et
 coûtait le texte net, le hit-testing simple, et 310 kB de MapLibre. Le bundle
-complet fait **40 kB gzip**, sans autre dépendance que Lit.
+complet fait **33 kB gzip**, sans autre dépendance que Lit.
+
+L'éditeur n'en fait pas partie. Une carte de tableau de bord qui embarque aussi
+un outil de dessin fait payer à chaque chargement, à tout le monde, un outil
+qu'on ouvre deux fois dans sa vie. La carte affiche une scène et la fait
+tourner ; le plan se dessine ailleurs.
 
 ---
 
@@ -110,7 +115,7 @@ Assistant — collée, ou déposée en glissant un fichier sur la page — y com
 depuis une pile de cartes. Un YAML fautif est refusé **en nommant la ligne**,
 sans toucher au plan à l'écran.
 
-Ce que l'éditeur ajoute par rapport au mode Plan de la carte :
+Ce que l'éditeur ajoute, au-delà du tracé lui-même :
 
 - **Gestion des niveaux** : ajouter, dupliquer (tous les identifiants
   régénérés), supprimer, régler altitude et hauteur sous plafond. **Séparer**
@@ -120,12 +125,16 @@ Ce que l'éditeur ajoute par rapport au mode Plan de la carte :
 - **Contrôles permanents** : ce qui empêchera la carte de charger, et ce qui la
   laissera charger sans rien faire d'utile — une caméra sans calibration, des
   pièces sans murs, une ouverture qui déborde de son mur.
+- **Apparence** : grille et libellés de pièce à afficher ou non, densité des
+  dalles, couleur du sol de chaque pièce et couleur de secteur de chaque caméra.
+  Tout part dans le YAML, donc la carte rend ce que l'éditeur montrait.
 - **Couverture réelle** d'une caméra sélectionnée, en pourcentage du secteur
   théorique : 30 % veut dire qu'elle regarde surtout un mur.
 - **Enregistrement automatique** dans le navigateur : un rechargement ne perd
   rien.
 
-Le bouton **Dessiner** reste dans la carte pour une retouche rapide sur place.
+**Tout le dessin est ici.** La carte n'a plus de mode édition : elle affiche une
+scène et la fait tourner, rien d'autre.
 
 | Outil | Raccourci | Geste |
 |---|---|---|
@@ -152,25 +161,32 @@ Le bouton **Dessiner** reste dans la carte pour une retouche rapide sur place.
   allège, linteau et type d'une ouverture ; cap, ouverture, portée d'une caméra.
 - **Murs autour** : entoure une pièce tracée de ses quatre murs en un clic.
 
-![Le mode Plan : vue à plat, grille, cote en direct et verrou d'angle](docs/editeur.png)
+![L'éditeur autonome : vue à plat, grille, cote en direct et verrou d'angle](docs/editeur.png)
 
 Navigation : molette pour zoomer, clic droit glissé pour pivoter et incliner,
 `Alt` ou clic milieu pour déplacer.
 
-Dans la carte, le bouton **Copier le YAML** met le bloc `levels` + `cameras` dans
-le presse-papier. Si Home Assistant tourne en HTTP simple — où l'API
-presse-papier n'existe pas — le bloc s'affiche pour sélection manuelle plutôt que
-d'échouer en silence.
+Si le presse-papier n'est pas disponible — page servie en HTTP simple, où l'API
+n'existe pas — le bloc reste affiché pour sélection manuelle, et le bouton
+**Télécharger .yaml** ne dépend de rien.
 
 ---
 
 ## Ce que la 2.5D montre
 
-Le rail de la carte porte trois boutons de vue — **Plan**, **2.5D**, **Relief**.
-Ils changent l'inclinaison *et* le lacet ensemble, parce que l'un sans l'autre ne
-donne pas de volume (voir la décision 3). Un tableau de bord n'a pas de
-clic droit : sans ces boutons, une carte ne pourrait être vue qu'à l'angle avec
-lequel sa config a été écrite.
+La scène se manipule directement, sans entrer dans aucun mode :
+
+| Geste | Effet |
+|---|---|
+| glisser | faire pivoter et incliner |
+| molette · pincement à deux doigts | zoomer |
+| deux doigts qui glissent · `Alt`, `Maj`, clic droit ou milieu | déplacer |
+
+Et le rail porte trois préréglages — **Plan**, **2.5D**, **Relief**. Ils changent
+l'inclinaison *et* le lacet ensemble, parce que l'un sans l'autre ne donne pas de
+volume (voir la décision 3). Dès que vous tournez la scène à la main, plus aucun
+préréglage ne s'affiche comme actif : aucun ne décrit l'angle que vous avez
+trouvé.
 
 Une fois inclinée, la scène dit trois choses qu'un plan ne peut pas dire :
 
@@ -185,6 +201,32 @@ Une fois inclinée, la scène dit trois choses qu'un plan ne peut pas dire :
 - **La hauteur de pose.** Un trait tireté descend de l'objectif jusqu'au sol, où
   une ellipse marque l'emplacement au sol. Une caméra à 2,30 m et une caméra
   posée par terre ne voient pas la même chose, et le plan seul les confond.
+
+**La maçonnerie est opaque.** L'alpha ne sert qu'à estomper un étage qui n'est
+pas l'étage actif, jamais à représenter la matière : une face de mur à 70 %
+laisse voir le sol et la couverture au travers, et la maison se lit comme une
+pile de boîtes en verre. L'ombrage se fait donc par la *couleur* — les faces les
+plus rasantes tirent vers l'encre.
+
+---
+
+## Personnalisation
+
+Tout se règle dans l'éditeur et voyage dans le YAML.
+
+| Réglage | Effet |
+|---|---|
+| `show-grid: false` | supprime le quadrillage au sol — utile pour tracer, encombrant pour lire |
+| `show-labels: false` | supprime les noms et surfaces au centre des pièces |
+| `floor-opacity: 0.25` | densité des dalles, de 0 (invisibles) à 1 |
+| `color` sur une caméra | couleur de son secteur **au repos** |
+| `color` sur une pièce | couleur de sa dalle |
+
+La couleur d'une caméra ne remplace que le secteur au repos. Mouvement,
+détection, flux dégradé et hors ligne gardent la palette de la carte marine,
+parce que ces couleurs-là sont la légende : un secteur rouge doit vouloir dire
+« il y a quelqu'un » sur toutes les caméras, sinon il ne veut plus rien dire sur
+aucune. Ce que l'override achète, c'est de distinguer quatre cônes silencieux.
 
 ---
 
@@ -222,6 +264,9 @@ Le reste a des valeurs par défaut (`azimuth: 0`, `fov: 90`, `range: 8`,
 ```yaml
 type: custom:semaphore-card
 grid: 0.5                  # pas de la grille, en mètres
+show-grid: true            # dessiner le quadrillage au sol
+show-labels: true          # noms et surfaces des pièces
+floor-opacity: 0.1         # densité des dalles
 topic-prefix: frigate
 timeline-hours: 24
 decay-seconds: 12
@@ -248,6 +293,7 @@ levels:
     rooms:
       - id: salon
         name: Salon
+        color: '#EFE7D4'   # couleur de la dalle, facultative
         ring: [[5, 0], [9, 0], [9, 7], [5, 7]]
 
   - id: etage
@@ -265,6 +311,7 @@ cameras:
     azimuth: 20            # cap de l'objectif, 0 = +y, sens horaire
     fov: 100
     range: 9
+    color: '#2F9E6B'       # couleur du secteur au repos, facultative
     resolution: [1280, 720]
     calibration:
       image:  [[0.08, 0.55], [0.92, 0.55], [0.98, 0.99], [0.02, 0.99]]
@@ -277,8 +324,9 @@ cameras:
 Les configs contenant `maptiler-api-key` sont **converties automatiquement** :
 les coordonnées passent en mètres, la première caméra devient l'origine, et les
 contours de pièces gagnent les murs qu'ils sous-entendaient. Un bandeau vous le
-signale. Ouvrez **Plan**, vérifiez, puis **Copier le YAML** pour figer la
-conversion.
+signale. Ouvrez le plan converti dans l'éditeur, vérifiez-le, puis remplacez
+votre config par ce qu'il exporte — sinon la conversion est refaite à chaque
+chargement.
 
 ### Si les blips atterrissent loin de leur caméra
 
@@ -344,13 +392,17 @@ un vrai Home Assistant.
 | Vérification | Résultat |
 |---|---|
 | `tsc --noEmit` strict | passe |
-| `vite build` | `dist/semaphore.js`, **40 kB gzip** |
+| `vite build` | `dist/semaphore.js`, **33 kB gzip** — l'éditeur n'y est pas |
 | Rendu réel (Chromium headless) | le canvas se peint, aucune erreur console |
 | Éditeur de bout en bout | chaîne de murs, longueur tapée (4,20 m → 4,200 m), annuler/refaire au geste près, percement d'une porte, copie YAML |
 | Éditeur autonome piloté (Chromium headless, 32 contrôles) | tracé, longueur au clavier, annuler/refaire, pose et annulation d'une caméra, ajout et duplication de niveau, import d'un YAML écrit à la main, refus d'un YAML fautif en nommant la ligne, persistance après rechargement, export relu |
 | Aller-retour YAML | `écrire → relire → réécrire` est un point fixe : géométrie, caméras et options identiques |
 | Cadrage dans les conditions de Home Assistant | une carte créée dans un conteneur de 0 × 0 puis dimensionnée se cadre dès qu'elle reçoit des pixels ; une config portant sa propre `view` est laissée où elle est |
 | Lecture 2.5D | volume de couverture et mât peints à 45°, absents à plat ; les trois préréglages changent bien inclinaison et lacet |
+| Navigation dans la carte | glisser fait pivoter, la molette et le pincement zooment, le pincement ne fait pas tourner, plus aucun préréglage ne s'attribue un angle trouvé à la main |
+| Carte dépouillée | plus de bouton d'édition, plus d'interface d'éditeur dans le DOM |
+| Murs opaques | le dessus d'un mur mesure exactement `#EFE7D4` au pixel, pas une version délavée |
+| Couleur par caméra | teinter toutes les caméras en vert puis en rouge inverse bien l'écart vert-rouge moyen du canvas |
 | MQTT → box → homographie → traînée | piste synthétique conforme |
 | 45 contrôles numériques | ouvertures et ligne de vue, `project`/`unproject` exactement inverses, hiérarchie d'accrochage, migration en mètres, YAML relu par `js-yaml` |
 
@@ -361,7 +413,9 @@ fatal — voir `CLAUDE.md`.
 
 **Défauts connus** : les chips de caméra peuvent recouvrir les libellés de pièce
 (deux calques, aucune détection de collision) ; le mode focus recadre la vue mais
-ne la restaure pas en sortant.
+ne la restaure pas en sortant ; sur mobile la scène capte le glissé à un doigt,
+donc on ne fait pas défiler le tableau de bord en partant de la carte ; l'angle
+trouvé à la main n'est pas mémorisé d'un chargement à l'autre.
 
 ### Volontairement laissé de côté
 

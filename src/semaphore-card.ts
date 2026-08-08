@@ -8,21 +8,20 @@ import { Scene } from './plan/scene';
 import { FrigateBridge } from './frigate';
 import { STATE_STYLES } from './theme';
 import { styles } from './semaphore-card-css';
-import type { PlanEditor, Tool } from './plan/editor';
 import { DEFAULT_VIEW, VIEW_PRESETS, presetOf, type ViewPreset } from './plan/view';
-import { findWall } from './plan/geometry';
-import { copyToClipboard, planYaml } from './plan/yaml';
+
+/**
+ * The card.
+ *
+ * It shows a scene and it lets you turn it. That is the whole of it — drawing
+ * the plan happens in the standalone editor, which has a window to do it in and
+ * a document of its own. A dashboard card that also contained a CAD tool was
+ * carrying tools nobody opens twice past the ones they use daily, and the cost
+ * was paid on every load by every user.
+ */
 
 const TICK_MS = 100;
 const THUMB_REFRESH_MS = 10_000;
-
-const TOOLS: Array<{ id: Tool; label: string; key: string; hint: string }> = [
-  { id: 'select', label: 'Sélection', key: 'G', hint: 'Tirez un sommet, un mur ou une caméra. Suppr efface.' },
-  { id: 'wall', label: 'Mur', key: 'M', hint: 'Cliquez chaque angle : chaque segment devient un mur. Tapez une longueur puis Entrée. Échap termine.' },
-  { id: 'room', label: 'Pièce', key: 'P', hint: 'Cliquez le contour, double-clic ou Entrée pour fermer. La surface s’affiche au centre.' },
-  { id: 'opening', label: 'Ouverture', key: 'O', hint: 'Cliquez sur un mur pour y percer une porte. Réglez ensuite largeur et type.' },
-  { id: 'camera', label: 'Caméra', key: 'C', hint: 'Cliquez l’emplacement, puis tirez la poignée rouge (cap et portée) ou verte (ouverture).' },
-];
 
 @customElement('semaphore-card')
 export class SemaphoreCard extends LitElement {
@@ -34,31 +33,21 @@ export class SemaphoreCard extends LitElement {
   @state() private focused: string | null = null;
   @state() private activeLevel = '';
   @state() private exploded = false;
-  @state() private editing = false;
   /**
-   * The reading the user asked for, restored when the editor closes.
-   *
-   * Undefined once they have orbited by hand: no preset button should claim
-   * credit for an angle the user found themselves.
+   * The reading the user asked for. Undefined once they have turned the scene
+   * by hand: no preset button should claim credit for an angle they found.
    */
   @state() private preset: ViewPreset | undefined = DEFAULT_VIEW;
-  @state() private tool: Tool = 'select';
-  @state() private showGrid = true;
   @state() private events: Detection[] = [];
   @state() private cursor: number | null = null;
   @state() private ready = false;
   @state() private error = '';
-  @state() private copied = false;
-  @state() private yamlFallback = '';
-  /** Bumped to force a re-render after the editor mutates the document. */
-  @state() private revision = 0;
 
   @query('.canvas') private canvasEl?: HTMLCanvasElement;
   @query('.stage') private stageEl?: HTMLElement;
 
   private scene?: Scene;
   private bridge?: FrigateBridge;
-  private editor?: PlanEditor;
   private tick = 0;
   private eventsVersion = -1;
   private thumbTimer = 0;
@@ -138,6 +127,13 @@ export class SemaphoreCard extends LitElement {
       this.scene = new Scene(canvas, this.config, {
         onFrame: () => this.positionChips(),
         onIdleChange: () => undefined,
+        // Turning the scene by hand means no preset describes it any more.
+        onViewMoved: () => {
+          if (this.preset) {
+            this.preset = undefined;
+            this.requestUpdate();
+          }
+        },
       });
       this.scene.init(stage);
       this.ready = true;
@@ -263,70 +259,6 @@ export class SemaphoreCard extends LitElement {
     this.requestUpdate();
   }
 
-  private toggleGrid(): void {
-    this.showGrid = !this.showGrid;
-    if (this.scene) {
-      this.scene.showGrid = this.showGrid;
-      this.scene.invalidate();
-    }
-  }
-
-  private toggleEditing(): void {
-    this.editing = !this.editing;
-    if (this.editing) {
-      this.unfocus();
-      // Tracing in a tilted view is guesswork, and tracing off-axis is worse:
-      // the grid stops lining up with the screen. Editing starts in plan.
-      this.scene?.applyPreset(VIEW_PRESETS[0]);
-      this.editor = this.scene?.enableEditor(() => {
-        this.revision++;
-        this.requestUpdate();
-      });
-      this.setTool('select');
-    } else {
-      this.scene?.disableEditor();
-      this.editor = undefined;
-      // Back to the reading the user was on, not to an arbitrary angle.
-      this.applyPreset(this.preset ?? DEFAULT_VIEW);
-    }
-    this.requestUpdate();
-  }
-
-  private setTool(tool: Tool): void {
-    this.tool = tool;
-    this.editor?.setTool(tool);
-    this.scene?.noteInteraction();
-    this.requestUpdate();
-  }
-
-  private undo(): void {
-    this.editor?.history.undo();
-    this.scene?.rebuildOccluders();
-    this.revision++;
-    this.requestUpdate();
-  }
-
-  private redo(): void {
-    this.editor?.history.redo();
-    this.scene?.rebuildOccluders();
-    this.revision++;
-    this.requestUpdate();
-  }
-
-  private async copyPlan(): Promise<void> {
-    const yaml = planYaml(this.config);
-    const ok = await copyToClipboard(yaml);
-    this.copied = ok;
-    this.yamlFallback = ok ? '' : yaml;
-    this.requestUpdate();
-    if (ok) setTimeout(() => { this.copied = false; this.requestUpdate(); }, 2400);
-  }
-
-  private setGrid(value: number): void {
-    this.config = { ...this.config, grid: value };
-    this.scene?.invalidate();
-  }
-
   private scrub(ev: PointerEvent): void {
     const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
@@ -350,9 +282,8 @@ export class SemaphoreCard extends LitElement {
         <div class="stage">
           <canvas class="canvas"></canvas>
           <div class="overlay">
-            ${this.renderRail()} ${this.renderStatus()}
-            ${this.editing ? nothing : this.renderChips()}
-            ${this.editing ? this.renderEditor() : this.renderPanel()}
+            ${this.renderRail()} ${this.renderStatus()} ${this.renderChips()}
+            ${this.renderPanel()}
           </div>
         </div>
         ${this.renderTimeline()}
@@ -365,8 +296,9 @@ export class SemaphoreCard extends LitElement {
     return html`
       <div class="notice">
         Config convertie depuis l'ancienne version cartographique : les
-        coordonnées sont maintenant en mètres. Ouvrez <strong>Plan</strong>,
-        vérifiez, puis <strong>Copier le YAML</strong> pour figer la conversion.
+        coordonnées sont maintenant en mètres. Vérifiez le plan dans l'éditeur
+        Sémaphore, puis remplacez ce bloc par ce qu'il exporte — sinon la
+        conversion sera refaite à chaque chargement.
       </div>
     `;
   }
@@ -388,31 +320,21 @@ export class SemaphoreCard extends LitElement {
               ${this.exploded ? 'Empiler' : 'Séparer'}
             </button>`
           : nothing}
-        ${this.editing
-          ? nothing
-          : html`<div class="group">
-              ${VIEW_PRESETS.map(
-                (p) => html`<button
-                  aria-pressed=${this.preset?.id === p.id}
-                  title="${p.label} — ${p.pitch}° d'inclinaison"
-                  @click=${() => this.applyPreset(p)}
-                >${p.label}</button>`,
-              )}
-            </div>`}
-        <button aria-pressed=${this.showGrid} @click=${this.toggleGrid} title="Grille">Grille</button>
-        <button aria-pressed=${this.editing} @click=${this.toggleEditing}>Dessiner</button>
+        <div class="group">
+          ${VIEW_PRESETS.map(
+            (p) => html`<button
+              aria-pressed=${this.preset?.id === p.id}
+              title="${p.label} — ${p.pitch}° d'inclinaison"
+              @click=${() => this.applyPreset(p)}
+            >${p.label}</button>`,
+          )}
+        </div>
         <button @click=${() => this.scene?.frame()} title="Tout cadrer">Cadrer</button>
       </div>
     `;
   }
 
   private renderStatus(): TemplateResult {
-    if (this.editing) {
-      const v = this.scene?.view;
-      return html`<div class="status">
-        ${v ? `${Math.round(v.zoom)} px/m · ${Math.round(v.pitch)}°` : ''}
-      </div>`;
-    }
     const alerts = [...this.states.values()].filter((s) => s === 'alert').length;
     const off = [...this.states.values()].filter((s) => s === 'offline').length;
     const text = alerts
@@ -430,11 +352,14 @@ export class SemaphoreCard extends LitElement {
   private renderChip(cam: CameraConfig): TemplateResult {
     const state = this.states.get(cam.name) ?? 'nominal';
     const style = STATE_STYLES[state];
+    // At rest a camera wears its own colour, so four quiet cones stay telling
+    // apart; the moment it has something to report the legend takes over.
+    const css = state === 'nominal' && cam.color ? cam.color : style.css;
     const thumb = this.bridge?.livePreviewUrl(cam);
     return html`
       <button
         class="chip ${state}"
-        style="color:${style.css}"
+        style="color:${css}"
         title=${style.caption}
         ${ref((el) => this.bindChip(cam.name, el))}
         @click=${() => this.focusCamera(cam.name)}
@@ -472,184 +397,12 @@ export class SemaphoreCard extends LitElement {
     `;
   }
 
-  // ---- editor UI ----------------------------------------------------------
-
-  private renderEditor(): TemplateResult {
-    const active = TOOLS.find((t) => t.id === this.tool);
-    return html`
-      <div class="editor">
-        <div class="tools">
-          ${TOOLS.map(
-            (t) => html`<button
-              aria-pressed=${this.tool === t.id}
-              title="${t.label} (${t.key})"
-              @click=${() => this.setTool(t.id)}
-            >${t.label}<kbd>${t.key}</kbd></button>`,
-          )}
-        </div>
-
-        <p class="tip">${active?.hint}</p>
-
-        <div class="row">
-          <label>Grille</label>
-          ${[0.1, 0.25, 0.5, 1].map(
-            (g) => html`<button
-              class="chiplet"
-              aria-pressed=${(this.config.grid ?? 0.5) === g}
-              @click=${() => this.setGrid(g)}
-            >${g < 1 ? `${g * 100} cm` : '1 m'}</button>`,
-          )}
-        </div>
-
-        ${this.renderInspector()}
-
-        <div class="tools">
-          <button @click=${this.undo} ?disabled=${!this.editor?.history.canUndo} title="Ctrl+Z">Annuler</button>
-          <button @click=${this.redo} ?disabled=${!this.editor?.history.canRedo} title="Ctrl+Y">Refaire</button>
-          <button @click=${this.copyPlan}>${this.copied ? 'Copié' : 'Copier le YAML'}</button>
-          <button @click=${this.toggleEditing}>Terminer</button>
-        </div>
-
-        <p class="tip muted">
-          Molette : zoom · clic droit glissé : pivoter et incliner ·
-          Alt ou clic milieu : déplacer · Maj : libérer l'accrochage
-        </p>
-
-        ${this.yamlFallback
-          ? html`
-              <p class="tip">Presse-papier indisponible (Home Assistant en HTTP simple).
-                Sélectionnez le bloc et copiez-le.</p>
-              <textarea class="yaml" readonly .value=${this.yamlFallback}></textarea>
-            `
-          : nothing}
-      </div>
-    `;
-  }
-
-  /** Numeric editing for whatever is selected. */
-  private renderInspector(): TemplateResult | typeof nothing {
-    const sel = this.editor?.selection;
-    if (!sel) return nothing;
-    void this.revision;
-
-    const numberRow = (
-      label: string,
-      value: number | undefined,
-      field: string,
-      step = 0.05,
-    ): TemplateResult => html`
-      <div class="row">
-        <label>${label}</label>
-        <input
-          type="number"
-          step=${step}
-          .value=${String(round2(value))}
-          @change=${(e: Event) =>
-            this.editor?.setField(field, parseFloat((e.target as HTMLInputElement).value))}
-        />
-      </div>
-    `;
-
-    if (sel.kind === 'wall') {
-      const wall = findWall(this.config.levels, sel.id);
-      if (!wall) return nothing;
-      const length = Math.hypot(wall.b[0] - wall.a[0], wall.b[1] - wall.a[1]);
-      return html`
-        <div class="inspector">
-          <h4>Mur</h4>
-          ${numberRow('Longueur (m)', length, 'length')}
-          ${numberRow('Épaisseur (m)', wall.thickness, 'thickness', 0.01)}
-          ${numberRow('Hauteur (m)', wall.height, 'height', 0.05)}
-          <div class="row">
-            <button class="chiplet" aria-pressed=${!!wall.transparent}
-              @click=${() => this.editor?.setField('transparent', 1)}>Vitré</button>
-            <button class="chiplet" @click=${() => this.editor?.deleteSelection()}>Supprimer</button>
-          </div>
-        </div>
-      `;
-    }
-
-    if (sel.kind === 'opening' && sel.wallId) {
-      const wall = findWall(this.config.levels, sel.wallId);
-      const o = wall?.openings?.find((x) => x.id === sel.id);
-      if (!o) return nothing;
-      return html`
-        <div class="inspector">
-          <h4>Ouverture</h4>
-          <div class="row">
-            <label>Type</label>
-            ${(['door', 'window', 'pass'] as const).map(
-              (k) => html`<button class="chiplet" aria-pressed=${o.kind === k}
-                @click=${() => this.editor?.setField('kind', k)}
-              >${k === 'door' ? 'Porte' : k === 'window' ? 'Fenêtre' : 'Passage'}</button>`,
-            )}
-          </div>
-          ${numberRow('Largeur (m)', o.width, 'width')}
-          ${numberRow('Allège (m)', o.sill, 'sill')}
-          ${numberRow('Linteau (m)', o.head, 'head')}
-          <div class="row">
-            <button class="chiplet" aria-pressed=${!!o.blocksSight}
-              @click=${() => this.editor?.setField('blocksSight', 1)}
-              title="Une ouverture laisse voir à travers par défaut">Opaque</button>
-            <button class="chiplet" @click=${() => this.editor?.deleteSelection()}>Supprimer</button>
-          </div>
-        </div>
-      `;
-    }
-
-    if (sel.kind === 'camera') {
-      const cam = this.config.cameras.find((c) => c.name === sel.id);
-      if (!cam) return nothing;
-      return html`
-        <div class="inspector">
-          <h4>Caméra</h4>
-          <div class="row">
-            <label>Nom Frigate</label>
-            <input type="text" .value=${cam.name}
-              @change=${(e: Event) => this.editor?.setField('name', (e.target as HTMLInputElement).value)} />
-          </div>
-          <div class="row">
-            <label>Libellé</label>
-            <input type="text" .value=${cam.label ?? ''}
-              @change=${(e: Event) => this.editor?.rename((e.target as HTMLInputElement).value)} />
-          </div>
-          ${numberRow('Cap (°)', cam.azimuth, 'azimuth', 1)}
-          ${numberRow('Ouverture (°)', cam.fov, 'fov', 1)}
-          ${numberRow('Portée (m)', cam.range, 'range', 0.5)}
-          ${numberRow('Hauteur (m)', cam.height, 'height', 0.1)}
-          <div class="row">
-            <button class="chiplet" @click=${() => this.editor?.deleteSelection()}>Supprimer</button>
-          </div>
-        </div>
-      `;
-    }
-
-    const room = this.config.levels.flatMap((l) => l.rooms ?? []).find((r) => r.id === sel.id);
-    if (!room) return nothing;
-    return html`
-      <div class="inspector">
-        <h4>Pièce</h4>
-        <div class="row">
-          <label>Nom</label>
-          <input type="text" .value=${room.name}
-            @change=${(e: Event) => this.editor?.rename((e.target as HTMLInputElement).value)} />
-        </div>
-        <div class="row">
-          <button class="chiplet" @click=${() => this.editor?.wallsAroundRoom(room.id)}>
-            Murs autour
-          </button>
-          <button class="chiplet" @click=${() => this.editor?.deleteSelection()}>Supprimer</button>
-        </div>
-      </div>
-    `;
-  }
-
   private renderTimeline(): TemplateResult | typeof nothing {
-    if (this.editing) return nothing;
     if (!this.ready) return html`<div class="empty">Chargement de la scène…</div>`;
     if (!this.config.cameras.length) {
       return html`<div class="empty">
-        Aucune caméra. Ouvrez <strong>Plan</strong> pour dessiner vos murs et en poser une.
+        Aucune caméra. Dessinez votre plan dans l'éditeur Sémaphore, puis collez
+        ici ce qu'il exporte.
       </div>`;
     }
 
@@ -693,8 +446,6 @@ export class SemaphoreCard extends LitElement {
     `;
   }
 }
-
-const round2 = (n: number | undefined): number => Math.round((n ?? 0) * 100) / 100;
 
 (window as any).customCards = (window as any).customCards ?? [];
 (window as any).customCards.push({

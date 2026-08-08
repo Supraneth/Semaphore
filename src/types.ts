@@ -122,6 +122,15 @@ export interface CameraConfig {
   resolution?: [number, number];
   calibration?: Calibration;
   entity?: string;
+  /**
+   * Colour of this camera's resting sector, `#RRGGBB`.
+   *
+   * Only the resting sector. Movement, detection, degraded and offline keep the
+   * chart palette, because those colours are the legend — a red sector has to
+   * mean "something is in there" on every camera or it means nothing anywhere.
+   * What this buys is telling four quiet cameras apart at a glance.
+   */
+  color?: string;
 }
 
 export interface ViewConfig {
@@ -139,6 +148,12 @@ export interface SemaphoreConfig {
   type: string;
   /** Grid spacing in metres. Default 0.5. */
   grid?: number;
+  /** Draw the floor grid at all. Default true. */
+  'show-grid'?: boolean;
+  /** Draw room names and areas. Default true. */
+  'show-labels'?: boolean;
+  /** Opacity of the floor slabs, 0 to 1. Default 0.1. */
+  'floor-opacity'?: number;
   view?: ViewConfig;
   'topic-prefix'?: string;
   'instance-id'?: string;

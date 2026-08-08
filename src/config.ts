@@ -63,6 +63,35 @@ function num(value: unknown, fallback: number, where: string, min?: number): num
   return value;
 }
 
+function bool(value: unknown, fallback: boolean, where: string): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'boolean') {
+    return fail(`${where} : attendu true ou false, reçu ${describe(value)}.`);
+  }
+  return value;
+}
+
+/**
+ * A colour is `#RGB` or `#RRGGBB`.
+ *
+ * Named CSS colours and `rgb()` would work in the canvas but not in
+ * `withAlpha`, which every translucent fill goes through — so a colour that
+ * looks fine on a wall would silently drop out of a sector.
+ */
+function colour(value: unknown, where: string): string {
+  if (typeof value !== 'string' || !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value)) {
+    return fail(
+      `${where} : attendu une couleur hexadécimale comme \`#D9503C\`, reçu ${describe(value)}.`,
+    );
+  }
+  // Canonical six digits, so `withAlpha` never has to guess.
+  if (value.length === 4) {
+    const [, r, g, b] = value;
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return value;
+}
+
 let seq = 0;
 const uid = (prefix: string): string => `${prefix}-${++seq}`;
 
@@ -231,6 +260,7 @@ function room(raw: unknown, levelId: string, index: number): Room {
     id,
     name: typeof r.name === 'string' && r.name ? r.name : `Pièce ${index + 1}`,
     ring: (r.ring as unknown[]).map((p, i) => point(p, `${where}, ring[${i}]`)),
+    color: r.color === undefined ? undefined : colour(r.color, `${where}, color`),
   };
 }
 
@@ -304,6 +334,8 @@ function camera(raw: unknown, index: number, levelIds: Set<string>): CameraConfi
     }
   }
 
+  if (c.color !== undefined) colour(c.color, `${where}, color`);
+
   const cal = c.calibration as Record<string, unknown> | undefined;
   if (cal !== undefined) {
     if (!Array.isArray(cal.image) || cal.image.length < 4) {
@@ -334,6 +366,7 @@ function camera(raw: unknown, index: number, levelIds: Set<string>): CameraConfi
     fov: num(c.fov, DEFAULTS.fov, `${where}, fov`, 1),
     range: num(c.range, DEFAULTS.range, `${where}, range`, 0.5),
     height: num(c.height, DEFAULTS.height, `${where}, height`),
+    color: c.color === undefined ? undefined : colour(c.color, `${where}, color`),
   };
 }
 
@@ -372,6 +405,9 @@ export function validateConfig(input: SemaphoreConfig): ValidationResult {
     config: {
       ...raw,
       grid: num(raw.grid, DEFAULTS.grid, '`grid`', 0),
+      'show-grid': bool(raw['show-grid'], true, '`show-grid`'),
+      'show-labels': bool(raw['show-labels'], true, '`show-labels`'),
+      'floor-opacity': num(raw['floor-opacity'], 0.1, '`floor-opacity`', 0),
       levels,
       cameras,
     },

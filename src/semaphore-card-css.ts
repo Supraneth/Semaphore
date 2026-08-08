@@ -49,7 +49,14 @@ export const styles = css`
     display: block;
     width: 100%;
     height: 100%;
+    /* The card owns every gesture over the scene: drag turns it, pinch zooms.
+       Leaving the browser its default touch behaviour here would scroll the
+       dashboard instead of the house. */
     touch-action: none;
+    cursor: grab;
+  }
+  .canvas:active {
+    cursor: grabbing;
   }
 
   .notice {
@@ -90,8 +97,7 @@ export const styles = css`
   }
 
   .rail button,
-  .panel header button,
-  .editor button {
+  .panel header button {
     font: inherit;
     font-size: 12px;
     letter-spacing: 0.02em;
@@ -106,20 +112,17 @@ export const styles = css`
   }
 
   .rail button:hover,
-  .editor button:hover,
   .panel header button:hover {
     background: rgba(12, 34, 51, 0.92);
   }
 
-  .rail button[aria-pressed='true'],
-  .editor button[aria-pressed='true'] {
+  .rail button[aria-pressed='true'] {
     background: ${white};
     border-color: ${white};
     color: var(--semaphore-ink);
   }
 
   .rail button:focus-visible,
-  .editor button:focus-visible,
   .chip:focus-visible {
     outline: 2px solid ${white};
     outline-offset: 2px;
@@ -269,147 +272,6 @@ export const styles = css`
     }
   }
 
-  /* ---- plan editor ----------------------------------------------------- */
-
-  .editor {
-    position: absolute;
-    left: 12px;
-    top: 12px;
-    bottom: 12px;
-    width: min(232px, 42%);
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px;
-    border-radius: var(--semaphore-radius);
-    background: rgba(12, 34, 51, 0.9);
-    border: 1px solid rgba(244, 231, 190, 0.16);
-    backdrop-filter: blur(10px);
-    animation: rise ${panel} ${ease} both;
-  }
-
-  .editor .tools {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px;
-  }
-
-  /* The panel sits beside the drawing, so it must stay narrow. Editor controls
-     are deliberately smaller and squarer than the rail's pills — they are a
-     toolbar, not navigation. */
-  .editor button {
-    font-size: 11px;
-    padding: 4px 8px;
-    border-radius: 7px;
-  }
-
-  .editor button[disabled] {
-    opacity: 0.35;
-    cursor: default;
-  }
-
-  .editor kbd {
-    margin-left: 5px;
-    padding: 0 3px;
-    font: inherit;
-    font-size: 9px;
-    opacity: 0.55;
-    border: 1px solid currentColor;
-    border-radius: 3px;
-  }
-
-  .editor .row {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    flex-wrap: wrap;
-  }
-
-  .editor .row label {
-    flex: 0 0 auto;
-    min-width: 52px;
-    font-size: 11px;
-    color: ${slate};
-  }
-
-  .editor .row input[type='number'] {
-    width: 74px;
-  }
-
-  .editor .row input[type='text'] {
-    flex: 1 1 110px;
-    min-width: 0;
-  }
-
-  .editor .chiplet {
-    padding: 3px 6px;
-    font-size: 10px;
-    border-radius: 6px;
-  }
-
-  .editor .inspector {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    padding: 8px;
-    border-radius: 8px;
-    background: rgba(244, 231, 190, 0.06);
-    border: 1px solid rgba(244, 231, 190, 0.12);
-  }
-
-  .editor .inspector h4 {
-    margin: 0;
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: ${slate};
-  }
-
-  .editor .tip.muted {
-    font-size: 10px;
-    opacity: 0.7;
-  }
-
-  .editor .tip {
-    margin: 0;
-    font-size: 11px;
-    line-height: 1.5;
-    color: ${slate};
-  }
-
-  .editor input {
-    font: inherit;
-    font-size: 12px;
-    padding: 5px 9px;
-    border-radius: 6px;
-    color: var(--semaphore-parchment);
-    background: rgba(244, 231, 190, 0.08);
-    border: 1px solid rgba(244, 231, 190, 0.2);
-  }
-
-  .editor input:focus-visible,
-  .editor .yaml:focus-visible {
-    outline: 2px solid ${white};
-    outline-offset: 1px;
-  }
-
-  /* The manual-copy fallback. Monospace and scrollable: it is meant to be
-     selected and read, not admired. */
-  .editor .yaml {
-    font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", monospace;
-    font-size: 11px;
-    line-height: 1.45;
-    height: 160px;
-    resize: vertical;
-    white-space: pre;
-    padding: 8px;
-    border-radius: 6px;
-    color: var(--semaphore-parchment);
-    background: rgba(12, 34, 51, 0.9);
-    border: 1px solid rgba(244, 231, 190, 0.2);
-  }
-
   /* ---- timeline -------------------------------------------------------- */
 
   .timeline {
@@ -477,7 +339,6 @@ export const styles = css`
   @media (prefers-reduced-motion: reduce) {
     .chip,
     .panel,
-    .editor,
     .rail button {
       animation: none !important;
       transition: none !important;
