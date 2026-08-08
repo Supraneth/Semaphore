@@ -34,20 +34,32 @@ export const CHART = {
   massing: '#12303F',
 } as const;
 
-/** `#RRGGBB` to the `[0,1]` triple the shaders want. */
+/** `#RRGGBB` to a `[0,255]` triple. */
 export function hexRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * `#RRGGBB` plus an alpha, as a canvas fill string.
+ *
+ * Every translucent colour in the renderer goes through here rather than being
+ * written as an `rgba(...)` literal, so the palette above stays the only place
+ * a colour is defined.
+ */
+export function withAlpha(hex: string, alpha: number): string {
+  if (!hex.startsWith('#')) return hex;
+  const [r, g, b] = hexRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, alpha)).toFixed(3)})`;
 }
 
 export interface StateStyle {
   css: string;
-  rgb: [number, number, number];
   /** Base alpha of the sector fill. */
   intensity: number;
   /**
-   * Sweep speed in radar revolutions per second. Zero means a still sector —
-   * and a still sector is what lets the rAF loop stop entirely.
+   * Sweep speed in revolutions per second. Zero means a still sector — and a
+   * still sector is what lets the rAF loop stop entirely.
    */
   sweep: number;
   caption: string;
@@ -56,35 +68,30 @@ export interface StateStyle {
 export const STATE_STYLES: Record<CameraState, StateStyle> = {
   nominal: {
     css: CHART.sectorWhite,
-    rgb: hexRgb(CHART.sectorWhite),
     intensity: 0.16,
     sweep: 0,
     caption: 'Veille',
   },
   motion: {
     css: CHART.buoyYellow,
-    rgb: hexRgb(CHART.buoyYellow),
     intensity: 0.3,
     sweep: 0.22,
     caption: 'Mouvement',
   },
   alert: {
     css: CHART.sectorRed,
-    rgb: hexRgb(CHART.sectorRed),
     intensity: 0.42,
     sweep: 0.5,
     caption: 'Détection',
   },
   degraded: {
     css: CHART.sectorGreen,
-    rgb: hexRgb(CHART.sectorGreen),
     intensity: 0.24,
     sweep: 0.12,
     caption: 'Flux dégradé',
   },
   offline: {
     css: CHART.slate,
-    rgb: hexRgb(CHART.slate),
     intensity: 0.08,
     sweep: 0,
     caption: 'Hors ligne',
@@ -112,10 +119,6 @@ const LABEL_COLOURS: Record<string, string> = {
 
 export function labelCss(label: string): string {
   return LABEL_COLOURS[label] ?? CHART.sectorWhite;
-}
-
-export function labelRgb(label: string): [number, number, number] {
-  return hexRgb(labelCss(label));
 }
 
 /**

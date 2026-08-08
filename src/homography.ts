@@ -1,5 +1,4 @@
-import type { BoxFormat, Calibration, CameraConfig, ImageXY, LngLat } from './types';
-import { LocalFrame, centroid } from './geo';
+import type { BoxFormat, Calibration, CameraConfig, ImageXY, Point } from './types';
 
 export type { BoxFormat };
 
@@ -89,25 +88,31 @@ export function applyHomography(h: Homography, p: [number, number]): [number, nu
 }
 
 /**
- * A camera's image→ground mapping, solved once and reused.
+ * A camera's image→plan mapping, solved once and reused.
  *
- * The homography is fitted in local metres rather than in degrees. Longitude
- * and latitude differ by a factor of ~1.5 in metres per degree at this
- * latitude, and their absolute values are large compared to the span of a
- * garden, which makes the 8×8 solve badly conditioned. Fitting in metres around
- * the calibration's own centroid keeps every number small and near-isotropic.
+ * Both sides are now plain metres, so there is no projection to fight. The
+ * calibration's own centroid is still subtracted before the solve: a plan
+ * anchored a few hundred metres from the origin would otherwise make the 8x8
+ * system needlessly ill-conditioned, and subtracting it costs two additions.
  */
 export class GroundProjector {
   private readonly h: Homography | null;
-  private readonly frame: LocalFrame;
+  private readonly origin: Point;
 
   constructor(calibration: Calibration) {
-    this.frame = new LocalFrame(centroid(calibration.ground));
+    const ground = calibration.ground ?? [];
+    const n = Math.max(1, ground.length);
+    this.origin = [
+      ground.reduce((s, p) => s + p[0], 0) / n,
+      ground.reduce((s, p) => s + p[1], 0) / n,
+    ];
     this.h =
-      calibration.image.length >= 4 && calibration.ground.length >= 4
+      calibration.image?.length >= 4 && ground.length >= 4
         ? solveHomography(
             calibration.image.slice(0, 4).map((p) => [p[0], p[1]] as [number, number]),
-            calibration.ground.slice(0, 4).map((p) => this.frame.toLocal(p)),
+            ground
+              .slice(0, 4)
+              .map((p) => [p[0] - this.origin[0], p[1] - this.origin[1]] as [number, number]),
           )
         : null;
   }
@@ -116,11 +121,11 @@ export class GroundProjector {
     return this.h !== null;
   }
 
-  /** Normalised image point → ground position, or null if it cannot land. */
-  project(image: ImageXY): LngLat | null {
+  /** Normalised image point → position on the plan in metres, or null. */
+  project(image: ImageXY): Point | null {
     if (!this.h) return null;
     const local = applyHomography(this.h, [image[0], image[1]]);
-    return local ? this.frame.toLngLat(local) : null;
+    return local ? [local[0] + this.origin[0], local[1] + this.origin[1]] : null;
   }
 }
 
@@ -181,7 +186,7 @@ export function groundPoint(
   raw: number[],
   projector: GroundProjector | null,
   format: BoxFormat = 'auto',
-): LngLat | null {
+): Point | null {
   if (!projector?.valid) return null;
   const box = normaliseBox(raw, camera.resolution, format);
   if (!box) return null;

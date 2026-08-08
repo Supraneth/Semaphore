@@ -1,10 +1,10 @@
-import type { LocalXY } from './types';
+import type { Point } from './types';
 
 /** A sight blocker: one wall edge, in local metres. */
-export type Segment = readonly [LocalXY, LocalXY];
+export type Segment = readonly [Point, Point];
 
 export interface IsovistRequest {
-  origin: LocalXY;
+  origin: Point;
   /** Lens heading in degrees, 0 = north, clockwise. */
   azimuth: number;
   /** Horizontal aperture in degrees. */
@@ -34,7 +34,7 @@ const cross = (ax: number, ay: number, bx: number, by: number) => ax * by - ay *
  * Rings are implicitly closed — the last point joins the first — because that
  * is how both the room editor and GeoJSON-minus-the-duplicate store them.
  */
-export function occludersFromPolygons(rings: LocalXY[][]): Segment[] {
+export function occludersFromPolygons(rings: Point[][]): Segment[] {
   const segments: Segment[] = [];
   for (const ring of rings) {
     if (ring.length < 2) continue;
@@ -58,7 +58,7 @@ export function occludersFromPolygons(rings: LocalXY[][]): Segment[] {
  * reject against the range circle is one comparison per segment and removes
  * essentially all of them.
  */
-function withinRange(segments: Segment[], origin: LocalXY, range: number): Segment[] {
+function withinRange(segments: Segment[], origin: Point, range: number): Segment[] {
   const [ox, oy] = origin;
   const out: Segment[] = [];
   for (const s of segments) {
@@ -78,7 +78,7 @@ function withinRange(segments: Segment[], origin: LocalXY, range: number): Segme
  * `range`. Returns `range` when the ray reaches open air.
  */
 function castRay(
-  origin: LocalXY,
+  origin: Point,
   dx: number,
   dy: number,
   range: number,
@@ -122,7 +122,7 @@ function castRay(
  *
  * Returns the apex first, then the rim in increasing angle.
  */
-export function computeIsovist(req: IsovistRequest): LocalXY[] {
+export function computeIsovist(req: IsovistRequest): Point[] {
   const { origin, azimuth, range } = req;
   const resolution = Math.max(0.25, req.resolution ?? 1.5);
   const fov = Math.min(360, Math.max(1, req.fov));
@@ -167,7 +167,7 @@ export function computeIsovist(req: IsovistRequest): LocalXY[] {
 
   angles.sort((a, b) => a - b);
 
-  const rim: LocalXY[] = [];
+  const rim: Point[] = [];
   let previous = Number.NEGATIVE_INFINITY;
   for (const angle of angles) {
     if (angle - previous < ANGLE_EPS) continue;
@@ -192,7 +192,7 @@ export function computeIsovist(req: IsovistRequest): LocalXY[] {
  *
  * Useful as a diagnostic — a camera reading 0.3 is mostly pointed at a wall.
  */
-export function isovistCoverage(isovist: LocalXY[], range: number, fov: number): number {
+export function isovistCoverage(isovist: Point[], range: number, fov: number): number {
   if (isovist.length < 3 || range <= 0) return 0;
   const apex = isovist[0];
   let area = 0;

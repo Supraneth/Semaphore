@@ -1,4 +1,4 @@
-import type { CameraConfig, Detection, LngLat } from './types';
+import type { CameraConfig, Detection, Point } from './types';
 import { GroundProjector, groundPoint, type BoxFormat } from './homography';
 
 /**
@@ -192,15 +192,13 @@ export class FrigateBridge {
    * identical samples onto the same pixel and push the real path out of the
    * trail window.
    */
-  private pushTrail(detection: Detection, pos: LngLat, t: number): void {
+  private pushTrail(detection: Detection, pos: Point, t: number): void {
     const last = detection.trail[detection.trail.length - 1];
-    if (last) {
-      const dLng = (pos[0] - last.pos[0]) * 111_320 * Math.cos((pos[1] * Math.PI) / 180);
-      const dLat = (pos[1] - last.pos[1]) * 111_320;
-      if (Math.hypot(dLng, dLat) < MIN_TRAIL_STEP_M) {
-        last.t = t;
-        return;
-      }
+    // Positions are metres now, so the step test is a plain distance rather
+    // than a degrees-to-metres conversion that had to know the latitude.
+    if (last && Math.hypot(pos[0] - last.pos[0], pos[1] - last.pos[1]) < MIN_TRAIL_STEP_M) {
+      last.t = t;
+      return;
     }
     detection.trail.push({ pos, t });
     if (detection.trail.length > MAX_TRAIL) detection.trail.shift();

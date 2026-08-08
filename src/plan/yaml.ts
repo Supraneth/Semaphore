@@ -79,57 +79,89 @@ function lines(value: unknown): string[] {
   return out;
 }
 
-export function toYaml(config: Partial<SemaphoreConfig>): string {
-  return lines(config).join('\n') + '\n';
+/**
+ * Serialises any plain object.
+ *
+ * Deliberately untyped: `planYaml` builds a trimmed, rounded shape that is not
+ * a `SemaphoreConfig` — half its fields are optional and it drops the ones the
+ * editor never touches. Shapes are checked on the way back in, by
+ * `validateConfig`, so the writer stays a writer.
+ */
+export function toYaml(value: Record<string, unknown>): string {
+  return lines(value).join('\n') + '\n';
 }
 
 /**
- * Strips the keys the editor never touches, so the copied block is the plan and
- * the cameras rather than a wholesale dump the user has to diff by eye.
+ * Emits the block the editor is responsible for: the levels, their walls,
+ * rooms and openings, and the cameras.
+ *
+ * Everything else in the config — topic prefix, timeline span, alert labels —
+ * is typed by hand and never touched here, so the copied block is something
+ * you can read rather than a wholesale dump to diff by eye.
  */
 export function planYaml(config: SemaphoreConfig): string {
+  const round = (n: number | undefined, places = 2): number | undefined =>
+    n === undefined ? undefined : Math.round(n * 10 ** places) / 10 ** places;
+  const pt = (p: [number, number]): [number, number] => [round(p[0])!, round(p[1])!];
+
   return toYaml({
+    grid: config.grid,
     levels: config.levels.map((l) => ({
       id: l.id,
       name: l.name,
       elevation: l.elevation,
       wallHeight: l.wallHeight,
-      rooms: l.rooms?.map((r) => ({
-        id: r.id,
-        name: r.name,
-        height: r.height,
-        thickness: r.thickness,
-        floor: r.floor,
-        transparent: r.transparent,
-        ring: r.ring,
-      })),
+      underlay: l.underlay
+        ? {
+            url: l.underlay.url,
+            origin: pt(l.underlay.origin),
+            scale: round(l.underlay.scale, 6),
+            rotation: round(l.underlay.rotation),
+            opacity: l.underlay.opacity,
+          }
+        : undefined,
+      walls: l.walls?.length
+        ? l.walls.map((w) => ({
+            id: w.id,
+            a: pt(w.a),
+            b: pt(w.b),
+            thickness: round(w.thickness),
+            height: round(w.height),
+            transparent: w.transparent,
+            openings: w.openings?.length
+              ? w.openings.map((o) => ({
+                  id: o.id,
+                  kind: o.kind,
+                  at: round(o.at),
+                  width: round(o.width),
+                  sill: round(o.sill),
+                  head: round(o.head),
+                  blocksSight: o.blocksSight,
+                }))
+              : undefined,
+          }))
+        : undefined,
+      rooms: l.rooms?.length
+        ? l.rooms.map((r) => ({ id: r.id, name: r.name, ring: r.ring.map(pt) }))
+        : undefined,
     })),
     cameras: config.cameras.map((c) => ({
       name: c.name,
       label: c.label,
-      position: c.position,
+      position: pt(c.position),
       level: c.level,
-      height: c.height,
+      height: round(c.height),
       azimuth: Math.round(c.azimuth),
       fov: Math.round(c.fov),
-      range: Math.round(c.range * 10) / 10,
+      range: round(c.range, 1),
       resolution: c.resolution,
-      calibration: c.calibration,
+      calibration: c.calibration
+        ? { image: c.calibration.image, ground: c.calibration.ground.map(pt) }
+        : undefined,
     })),
   });
 }
 
-/**
- * Copies, by whichever route the browser allows.
- *
- * `navigator.clipboard` only exists in a secure context, and a great many Home
- * Assistant installs are reached over plain HTTP at `homeassistant.local:8123`.
- * On those the async API is simply `undefined`, so the deprecated
- * `execCommand` path is not a legacy nicety — it is the only one that works.
- *
- * Returns false when both fail, which is the card's cue to show the block for
- * manual selection rather than swallowing the user's work.
- */
 export async function copyToClipboard(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {

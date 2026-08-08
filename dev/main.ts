@@ -1,102 +1,112 @@
 import '../src/semaphore-card';
 import { createMockHass, registerCardStub, registerStreamStub } from './mock-hass';
-import type { SemaphoreConfig } from '../src/types';
+import type { Point, SemaphoreConfig, Wall } from '../src/types';
 
 registerCardStub();
 registerStreamStub();
 
 /**
- * The scene. Move `HOME` to your own coordinates and the whole demo follows —
- * the basemap, the harvested building footprints, and the camera placements are
- * all relative to it.
+ * A small house, in metres.
+ *
+ * Origin at the front-left corner, x to the right, y away from the street.
+ * Everything below is the kind of thing the editor produces — the point of
+ * writing it out by hand once is that it stays readable, which a list of
+ * seven-decimal coordinates never was.
  */
-const HOME: [number, number] = [-2.75, 47.6602];
 
-const off = (dx: number, dy: number): [number, number] => [
-  HOME[0] + dx / (111320 * Math.cos((HOME[1] * Math.PI) / 180)),
-  HOME[1] + dy / 110540,
+let wallSeq = 0;
+const wall = (a: Point, b: Point, openings?: Wall['openings']): Wall => ({
+  id: `mur-${++wallSeq}`,
+  a,
+  b,
+  thickness: 0.2,
+  openings,
+});
+
+// 9 × 7 m footprint, split by a spine wall with a door in it.
+const walls: Wall[] = [
+  wall([0, 0], [9, 0], [{ id: 'porte-entree', kind: 'door', at: 3.6, width: 1, sill: 0, head: 2.1 }]),
+  wall([9, 0], [9, 7]),
+  wall([9, 7], [0, 7], [{ id: 'baie', kind: 'window', at: 2, width: 2.4, sill: 0.9, head: 2.2 }]),
+  wall([0, 7], [0, 0]),
+  wall([5, 0], [5, 7], [{ id: 'porte-salon', kind: 'door', at: 4.2, width: 0.9, sill: 0, head: 2.1 }]),
+  wall([0, 4], [5, 4], [{ id: 'porte-cuisine', kind: 'pass', at: 1.4, width: 1.2, sill: 0, head: 2.1 }]),
 ];
-
-const mapTilerKey =
-  new URLSearchParams(location.search).get('key') ??
-  localStorage.getItem('maptiler-key') ??
-  '';
 
 const config: SemaphoreConfig = {
   type: 'custom:semaphore-card',
-  'maptiler-api-key': mapTilerKey,
-  // No key means the keyless demo basemap rather than a refusal to start.
-  'map-style': mapTilerKey ? 'hybrid' : 'demo',
+  grid: 0.5,
   'timeline-hours': 6,
-  'orbit-speed': 0.9,
+  'orbit-speed': 0,
   levels: [
-    { id: 'exterieur', name: 'Extérieur', elevation: 0 },
     {
       id: 'rdc',
       name: 'Rez-de-chaussée',
-      elevation: 0.2,
-      // Any image works; swap in your own plan and adjust the corners.
-      plan: {
-        url: 'https://placehold.co/900x600/EFE7D4/0C2233?text=Plan+RDC',
-        corners: [off(-18, 14), off(18, 14), off(18, -10), off(-18, -10)],
-      },
-      wallHeight: 2.6,
+      elevation: 0,
+      wallHeight: 2.5,
+      walls,
       rooms: [
-        {
-          id: 'rdc-salon',
-          name: 'Salon',
-          ring: [off(-14, 10), off(-1, 10), off(-1, -2), off(-14, -2)],
-        },
-        {
-          id: 'rdc-cuisine',
-          name: 'Cuisine',
-          ring: [off(-1, 10), off(11, 10), off(11, -2), off(-1, -2)],
-        },
-        {
-          id: 'rdc-entree',
-          name: 'Entrée',
-          ring: [off(-14, -2), off(-1, -2), off(-1, -9), off(-14, -9)],
-        },
+        { id: 'salon', name: 'Salon', ring: [[5, 0], [9, 0], [9, 7], [5, 7]] },
+        { id: 'cuisine', name: 'Cuisine', ring: [[0, 4], [5, 4], [5, 7], [0, 7]] },
+        { id: 'entree', name: 'Entrée', ring: [[0, 0], [5, 0], [5, 4], [0, 4]] },
+      ],
+    },
+    {
+      id: 'etage',
+      name: 'Étage',
+      elevation: 2.7,
+      wallHeight: 2.4,
+      walls: [
+        wall([0, 0], [9, 0]),
+        wall([9, 0], [9, 7]),
+        wall([9, 7], [0, 7]),
+        wall([0, 7], [0, 0]),
+        wall([4.5, 0], [4.5, 7], [{ id: 'porte-chambre', kind: 'door', at: 5.5, width: 0.9 }]),
+      ],
+      rooms: [
+        { id: 'chambre', name: 'Chambre', ring: [[0, 0], [4.5, 0], [4.5, 7], [0, 7]] },
+        { id: 'bureau', name: 'Bureau', ring: [[4.5, 0], [9, 0], [9, 7], [4.5, 7]] },
       ],
     },
   ],
   cameras: [
-    { name: 'allee', label: 'Allée', position: off(-22, -18), azimuth: 38, fov: 96, range: 30, height: 3.2 },
-    { name: 'jardin', label: 'Jardin', position: off(26, -14), azimuth: 305, fov: 88, range: 34, height: 3 },
-    { name: 'terrasse', label: 'Terrasse', position: off(14, 12), azimuth: 200, fov: 110, range: 24, height: 2.8 },
-    { name: 'portail', label: 'Portail', position: off(-26, 4), azimuth: 95, fov: 70, range: 28, height: 3.4 },
     {
-      name: 'salon',
-      label: 'Salon',
-      position: off(-6, 2),
+      name: 'entree',
+      label: 'Entrée',
+      position: [2.4, 0.4],
       level: 'rdc',
-      azimuth: 45,
-      fov: 110,
+      height: 2.3,
+      azimuth: 20,
+      fov: 100,
       range: 9,
-      height: 2.4,
+      resolution: [1280, 720],
+      // Four points on the entrance floor, so the blips have somewhere to land.
+      calibration: {
+        image: [
+          [0.08, 0.55],
+          [0.92, 0.55],
+          [0.98, 0.99],
+          [0.02, 0.99],
+        ],
+        ground: [
+          [0.6, 3.6],
+          [4.4, 3.6],
+          [3.6, 1.0],
+          [1.4, 1.0],
+        ],
+      },
     },
+    { name: 'salon', label: 'Salon', position: [8.6, 0.5], level: 'rdc', height: 2.3, azimuth: 330, fov: 95, range: 8 },
+    { name: 'cuisine', label: 'Cuisine', position: [0.4, 6.6], level: 'rdc', height: 2.3, azimuth: 135, fov: 90, range: 6 },
+    { name: 'palier', label: 'Palier', position: [4.5, 3.5], level: 'etage', height: 2.2, azimuth: 180, fov: 110, range: 7 },
   ],
-};
-
-// Calibrate one camera so the ground blips have something to project onto.
-config.cameras[0].resolution = [1280, 720];
-config.cameras[0].calibration = {
-  image: [
-    [0.08, 0.55],
-    [0.92, 0.55],
-    [0.98, 0.99],
-    [0.02, 0.99],
-  ],
-  ground: [off(-30, -8), off(-14, -8), off(-16, -20), off(-28, -20)],
 };
 
 const card = document.createElement('semaphore-card') as any;
 card.setConfig(config);
 card.hass = createMockHass({
   resolution: config.cameras[0].resolution,
-  // Paths are normalised image coordinates and stay inside the calibrated quad
-  // above (u 0.02–0.98, v 0.55–0.99). A homography extrapolated past its own
-  // correspondences is still valid arithmetic and still complete nonsense.
+  // Normalised image coordinates, inside the calibrated quad above.
   cameras: config.cameras.map((c, i) => ({
     name: c.name,
     path: Array.from({ length: 22 }, (_, k) => {
@@ -109,22 +119,4 @@ card.hass = createMockHass({
   })),
 });
 
-const mount = document.getElementById('app')!;
-
-// Without a key the engine falls back to MapLibre's keyless demo style: no
-// imagery and no buildings, so nothing can actually be placed, but the
-// sectors, the blips and the whole card run. A banner says so rather than the
-// bench refusing to start.
-if (!mapTilerKey) {
-  const note = document.createElement('p');
-  note.style.cssText =
-    'font:400 14px/1.6 system-ui;max-width:56ch;margin:0 auto 16px;color:#E2A23A';
-  note.innerHTML =
-    'Pas de clé MapTiler : fond de carte de démonstration, sans imagerie ni bâtiments. ' +
-    'Ajoutez <code>?key=VOTRE_CLE</code> à l\'URL pour la vraie scène — ' +
-    'la clé est gratuite sur maptiler.com/cloud.';
-  mount.appendChild(note);
-} else {
-  localStorage.setItem('maptiler-key', mapTilerKey);
-}
-mount.appendChild(card);
+document.getElementById('app')!.appendChild(card);

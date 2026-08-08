@@ -1,121 +1,148 @@
 /**
- * The Lovelace config schema and the runtime model.
+ * The scene model, in metres.
  *
- * Config keys are kebab-case because that is what a user types in a YAML card
- * editor; runtime fields are camelCase. The two never mix in one object.
+ * There is no map and no geography here. The origin is wherever the user
+ * decided the corner of their house is, x runs east, y runs north, and every
+ * number is a metre. That single choice is what makes a grid a grid, snapping
+ * exact, and a wall length something you can type.
  */
 
-/** `[longitude, latitude]`, the GeoJSON order — never lat/lng. */
-export type LngLat = [number, number];
-
-/** Metres east/north of the scene origin. See `LocalFrame`. */
-export type LocalXY = [number, number];
+/** Metres. `[x, y]` on the floor plane, `[x, y, z]` when height matters. */
+export type Point = [number, number];
+export type Point3 = [number, number, number];
 
 /** Normalised image coordinates, `[0,1]` from the top-left of the frame. */
 export type ImageXY = [number, number];
 
 export type CameraState = 'nominal' | 'motion' | 'alert' | 'degraded' | 'offline';
 
+export type BoxFormat = 'auto' | 'xyxy' | 'xywh';
+
 /**
- * Four image points and the four ground points they land on.
+ * A hole in a wall.
  *
- * The order has to match between the two arrays, and the quad must not be
- * degenerate — three collinear points make the DLT singular. Anything roughly
- * rectangular on the ground works: a patio, a parking bay, a doormat and three
- * paving stones.
+ * `at` is measured along the wall from its `a` end, so moving a wall's endpoint
+ * drags its doors with it instead of stranding them in space.
  */
-export interface Calibration {
-  image: ImageXY[];
-  ground: LngLat[];
-}
-
-export interface CameraConfig {
-  /** The Frigate camera name, exactly as it appears in `frigate/<name>/...`. */
-  name: string;
-  label?: string;
-  position: LngLat;
-  /** Which level the camera sits on. Defaults to the first level. */
-  level?: string;
-  /** Mount height in metres above the level. Only affects the chip anchor. */
-  height?: number;
-  /** Lens heading in degrees, 0 = north, clockwise. */
-  azimuth: number;
-  /** Horizontal field of view in degrees. */
-  fov: number;
-  /** Useful range in metres — where the sector fades out. */
-  range: number;
-  /** Sensor size in pixels. Lets absolute Frigate boxes be normalised. */
-  resolution?: [number, number];
-  calibration?: Calibration;
-  /**
-   * Overrides the guessed `camera.<name>` entity, for installs that renamed
-   * their entities or run several Frigate instances.
-   */
-  entity?: string;
-}
-
-export interface RoomConfig {
+export interface Opening {
   id: string;
-  name: string;
-  /** Closed ring, implicitly — do not repeat the first point. */
-  ring: LngLat[];
-  /** Wall height in metres. Falls back to the level's `wallHeight`. */
-  height?: number;
-  /** Wall thickness in metres. Default 0.16. */
+  kind: 'door' | 'window' | 'pass';
+  /** Metres from the wall's `a` end to the opening's near edge. */
+  at: number;
+  width: number;
+  /** Height of the sill above the floor. A door is 0. */
+  sill?: number;
+  /** Height of the head above the floor. Defaults to the wall height. */
+  head?: number;
+  /**
+   * Glazed but opaque to a camera — frosted glass, a solid door. By default an
+   * opening is a gap in the sight line as well as in the wall, which is the
+   * whole reason a camera in the hall can watch the living room.
+   */
+  blocksSight?: boolean;
+}
+
+/**
+ * A wall segment.
+ *
+ * First-class rather than derived from a room outline: that is what lets a
+ * garden fence, a partition that stops halfway, or a free-standing hedge exist
+ * without pretending to enclose anything.
+ */
+export interface Wall {
+  id: string;
+  a: Point;
+  b: Point;
+  /** Metres. Default 0.2. */
   thickness?: number;
-  /** `false` drops the floor slab, for a terrace or a courtyard. */
-  floor?: boolean;
-  /** Drawn but not raycast: glass walls, open-plan boundaries. */
+  /** Metres. Falls back to the level's `wallHeight`. */
+  height?: number;
+  openings?: Opening[];
+  /** Drawn, but sight passes through: a glass partition, a railing. */
   transparent?: boolean;
 }
 
-export interface PlanConfig {
-  /** Any URL the browser can fetch — `/local/...` for HA's www folder. */
+/**
+ * A floor area.
+ *
+ * Rooms no longer carry the walls — they are the slab, the label and the area
+ * readout. Sight blocking lives entirely in `Wall`, so there is exactly one
+ * place a wall can come from.
+ */
+export interface Room {
+  id: string;
+  name: string;
+  /** Closed implicitly; do not repeat the first point. */
+  ring: Point[];
+  /** Overrides the level's floor colour. */
+  color?: string;
+}
+
+/** A scanned plan pinned to the world, to trace over. */
+export interface Underlay {
   url: string;
-  /** Corners in TL, TR, BR, BL order, matching the image's own corners. */
-  corners: LngLat[];
+  /** World position of the image's top-left corner. */
+  origin: Point;
+  /** Metres per image pixel — set by drawing a line of known length. */
+  scale: number;
+  /** Degrees clockwise. */
+  rotation?: number;
   opacity?: number;
 }
 
-export interface LevelConfig {
+export interface Level {
   id: string;
   name: string;
-  /** Metres above ground. The outdoor level is 0. */
+  /** Metres above the ground floor. */
   elevation: number;
+  /** Default height for walls on this level. */
   wallHeight?: number;
-  plan?: PlanConfig;
-  rooms?: RoomConfig[];
-  /**
-   * Extra sight blockers that are not rooms — a hedge, a fence, a neighbour's
-   * gable. Polygons only; their outer rings become segments.
-   */
-  occluders?: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
+  walls?: Wall[];
+  rooms?: Room[];
+  underlay?: Underlay;
 }
 
-/**
- * `demo` is MapLibre's keyless style: no imagery, no buildings, useless for
- * placing a camera, but it runs without an account. It exists so the dev bench
- * and a first look at the card do not require signing up for anything.
- */
-export type MapStyle = 'hybrid' | 'streets' | 'topo' | 'demo';
+export interface Calibration {
+  image: ImageXY[];
+  /** The same four points on the floor, in metres. */
+  ground: Point[];
+}
 
-/**
- * How to read Frigate's `box`. `auto` guesses; set it explicitly once you have
- * looked at one real payload. See `normaliseBox`.
- */
-export type BoxFormat = 'auto' | 'xyxy' | 'xywh';
+export interface CameraConfig {
+  name: string;
+  label?: string;
+  position: Point;
+  level?: string;
+  /** Mount height above the level's floor. */
+  height?: number;
+  /** Lens heading in degrees, 0 = +y (north on the plan), clockwise. */
+  azimuth: number;
+  fov: number;
+  range: number;
+  resolution?: [number, number];
+  calibration?: Calibration;
+  entity?: string;
+}
+
+export interface ViewConfig {
+  /** Degrees. 0 looks along +y. */
+  yaw?: number;
+  /** Degrees. 0 is a flat plan view, 60 is the 2.5D reading. */
+  pitch?: number;
+  /** Pixels per metre. */
+  zoom?: number;
+  /** World point held at the centre of the canvas. */
+  center?: Point;
+}
 
 export interface SemaphoreConfig {
   type: string;
-  'maptiler-api-key': string;
-  'map-style'?: MapStyle;
-  /** MQTT topic root, matching Frigate's `mqtt.topic_prefix`. */
+  /** Grid spacing in metres. Default 0.5. */
+  grid?: number;
+  view?: ViewConfig;
   'topic-prefix'?: string;
-  /** Set when several Frigate instances share one broker. */
   'instance-id'?: string;
-  /** Labels that promote a detection to `alert`. Default: person, car. */
   'alert-labels'?: string[];
-  /** Overrides the bounding-box heuristic when it guesses wrong. */
   'box-format'?: BoxFormat;
   'timeline-hours'?: number;
   /** How long a sector stays lit after its last detection. Default 12. */
@@ -124,25 +151,17 @@ export interface SemaphoreConfig {
   'orbit-speed'?: number;
   /** Seconds of stillness before the orbit resumes. Default 6. */
   'orbit-resume'?: number;
-  /** Isovist angular sampling in degrees. Lower is smoother and slower. */
+  /** Isovist angular sampling in degrees. Default 1.5. */
   'fov-resolution'?: number;
-  levels: LevelConfig[];
+  levels: Level[];
   cameras: CameraConfig[];
 }
 
-/** One sample of a tracked object's path. */
 export interface TrailPoint {
-  pos: LngLat;
+  pos: Point;
   t: number;
 }
 
-/**
- * A tracked object.
- *
- * `id` is Frigate's event id, which is stable across the `new`/`update`/`end`
- * message sequence — that is what lets an update extend a trail rather than
- * start a second one.
- */
 export interface Detection {
   id: string;
   camera: string;
@@ -151,9 +170,7 @@ export interface Detection {
   startTime: number;
   endTime?: number;
   trail: TrailPoint[];
-  /** True once Frigate sent `type: end`. */
   ended: boolean;
-  /** Frigate's snapshot/clip availability, for the timeline. */
   hasClip?: boolean;
   hasSnapshot?: boolean;
 }
@@ -162,9 +179,8 @@ export interface CameraRuntime {
   config: CameraConfig;
   state: CameraState;
   intensity: number;
-  /** Star-shaped polygon in local metres, apex first. */
-  isovist: LocalXY[];
-  /** Set when the isovist needs recomputing — never per frame. */
+  /** Star-shaped polygon in metres, apex first. */
+  isovist: Point[];
   dirty: boolean;
   lastSeen: number;
   lastEventAt: number;

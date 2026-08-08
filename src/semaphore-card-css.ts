@@ -36,26 +36,28 @@ export const styles = css`
   .stage {
     position: relative;
     width: 100%;
-    /* Tall enough that a 55° pitch still shows ground in front of the cameras,
-       capped so the card never eats a phone screen whole. */
+    /* Tall enough to hold a floor plan at a useful scale, capped so the card
+       never eats a phone screen whole. */
     aspect-ratio: 16 / 10;
-    max-height: 70vh;
+    max-height: 74vh;
     background: var(--semaphore-ink);
   }
 
-  .map {
+  .canvas {
     position: absolute;
     inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
   }
 
-  /* MapLibre injects its own chrome; keep it in the chart palette. */
-  .map .maplibregl-ctrl-attrib {
-    background: rgba(12, 34, 51, 0.72);
-    color: var(--semaphore-parchment);
-    font-size: 10px;
-  }
-  .map .maplibregl-ctrl-attrib a {
-    color: var(--semaphore-parchment);
+  .notice {
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--semaphore-ink);
+    background: ${unsafeCSS(CHART.buoyYellow)};
   }
 
   /* The overlay must not swallow map drags — only its controls take pointers. */
@@ -266,8 +268,10 @@ export const styles = css`
   .editor {
     position: absolute;
     left: 12px;
+    top: 12px;
     bottom: 12px;
-    width: min(300px, 60%);
+    width: min(232px, 42%);
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -282,7 +286,83 @@ export const styles = css`
   .editor .tools {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: 3px;
+  }
+
+  /* The panel sits beside the drawing, so it must stay narrow. Editor controls
+     are deliberately smaller and squarer than the rail's pills — they are a
+     toolbar, not navigation. */
+  .editor button {
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 7px;
+  }
+
+  .editor button[disabled] {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .editor kbd {
+    margin-left: 5px;
+    padding: 0 3px;
+    font: inherit;
+    font-size: 9px;
+    opacity: 0.55;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+  }
+
+  .editor .row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+
+  .editor .row label {
+    flex: 0 0 auto;
+    min-width: 52px;
+    font-size: 11px;
+    color: ${slate};
+  }
+
+  .editor .row input[type='number'] {
+    width: 74px;
+  }
+
+  .editor .row input[type='text'] {
+    flex: 1 1 110px;
+    min-width: 0;
+  }
+
+  .editor .chiplet {
+    padding: 3px 6px;
+    font-size: 10px;
+    border-radius: 6px;
+  }
+
+  .editor .inspector {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px;
+    border-radius: 8px;
+    background: rgba(244, 231, 190, 0.06);
+    border: 1px solid rgba(244, 231, 190, 0.12);
+  }
+
+  .editor .inspector h4 {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: ${slate};
+  }
+
+  .editor .tip.muted {
+    font-size: 10px;
+    opacity: 0.7;
   }
 
   .editor .tip {
@@ -382,7 +462,11 @@ export const styles = css`
     padding: 24px 8px;
   }
 
-  /* An orbiting map and a sweeping sector are ambient motion, not information.
+  .empty.error {
+    color: ${red};
+  }
+
+  /* An orbiting view and a sweeping sector are ambient motion, not information.
      Anyone who asked the OS to stop that gets a still card. */
   @media (prefers-reduced-motion: reduce) {
     .chip,
