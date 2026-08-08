@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sémaphore — banc d'essai</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        /* The bench stands in for the Home Assistant theme variables the card
+           reads, so the chrome looks the way it will on a dashboard. */
+        --primary-text-color: #efe7d4;
+        --secondary-text-color: #5b7285;
+        --card-background-color: #101820;
+        --ha-card-border-radius: 14px;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #08131c;
+        color: var(--primary-text-color);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #app {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      .back {
+        display: block;
+        max-width: 1080px;
+        margin: 16px auto -8px;
+        padding: 0 16px;
+        color: #5b7285;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="back" href="/">← éditeur de plan</a>
+    <div id="app"></div>
+    <script type="module" src="/dev/main.ts"></script>
+  </body>
+</html>

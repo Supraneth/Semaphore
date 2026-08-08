@@ -19,7 +19,20 @@ Complet et exécuté — mais jamais dans un vrai Home Assistant.
 Vérifié mécaniquement :
 
 - `tsc --noEmit` strict passe, `vite build` produit `dist/semaphore.js`
-  (~40 kB gzip — plus aucune dépendance runtime hors Lit).
+  (~41 kB gzip — plus aucune dépendance runtime hors Lit).
+- **L'éditeur autonome tourne**, piloté en Chromium headless via CDP : tracé
+  d'une chaîne de murs, longueur au clavier, annuler/refaire, pose puis
+  annulation d'une caméra, ajout et duplication de niveau (identifiants tous
+  régénérés), import d'un YAML écrit à la main — flow maps, commentaires,
+  accents, séquences à fleur de clé —, refus d'un YAML fautif en nommant la
+  ligne sans toucher au plan affiché, persistance après rechargement, export
+  relu. Aucune exception, console propre.
+- L'aller-retour `cardYaml` → `parseYaml` → `validateConfig` est un point fixe.
+- **Le cadrage est vérifié dans les conditions de Home Assistant** : une carte
+  créée dans un conteneur de 0 × 0 puis dimensionnée se cadre sur le bâtiment ;
+  une config portant sa propre `view` reste où elle est.
+- Volume de couverture et mât peints à 45°, absents à plat ; les trois
+  préréglages appliquent bien inclinaison **et** lacet.
 - La carte **rend réellement** : testée dans un Chromium headless. Le canvas se
   peint, les chips se positionnent, la timeline se remplit, aucune erreur
   console.
@@ -54,7 +67,7 @@ coûtait 310 kB gzip.
 | `src/homography.ts` | DLT 4 points, bbox Frigate → position sur le plan |
 | `src/frigate.ts` | souscription MQTT, suivi des détections, URLs média |
 | `src/theme.ts` | palette carte marine, styles d'état, tempos |
-| `src/plan/view.ts` | caméra 2.5D orthographique, `project` / `unproject` exacts |
+| `src/plan/view.ts` | caméra 2.5D orthographique, `project` / `unproject` exacts, `VIEW_PRESETS` |
 | `src/plan/geometry.ts` | murs → faces et → occultants, ouvertures, aires |
 | `src/plan/renderer.ts` | tout le rendu, Canvas 2D, algorithme du peintre |
 | `src/plan/editor.ts` | outils, accrochage, saisie clavier, glisser-déposer |
@@ -64,7 +77,15 @@ coûtait 310 kB gzip.
 | `src/plan/yaml.ts` | sérialiseur YAML minimal (pas de js-yaml) |
 | `src/semaphore-card.ts` | carte Lit : rail, outils, inspecteur, timeline |
 | `src/semaphore-card-css.ts` | styles de la carte |
+| `studio/studio.ts` | éditeur autonome : rail d'outils, niveaux, inspecteur, options, contrôles |
+| `studio/studio-css.ts` | styles de l'éditeur (palette carte marine assumée, pas de variables HA) |
+| `studio/project.ts` | page blanche, maison d'exemple, sauvegarde locale, import, contrôles |
+| `studio/yaml-parse.ts` | lecteur YAML, sous-ensemble suffisant pour une config Lovelace |
 | `dev/` | banc d'essai : faux HA + générateur d'événements Frigate |
+
+`studio/` et `dev/` ne sont **jamais** dans `dist/semaphore.js` : `vite build`
+part de `src/semaphore-card.ts` et rien d'autre. C'est ce qui autorise l'éditeur
+à être aussi bavard qu'il le faut sans peser sur la carte.
 
 ## Invariants à ne pas casser
 
@@ -114,7 +135,21 @@ c'est probablement le changement qui a tort.
 11. **`capture()` s'appelle avant la mutation** et empile l'état courant. Un
     geste = une annulation. Ne pas réintroduire de cache « dernier état
     capturé » : il retarde d'une mutation et fait reculer la première annulation
-    de deux crans.
+    de deux crans. L'instantané couvre **les niveaux et les caméras** : quand il
+    ne couvrait que les niveaux, poser ou supprimer une caméra empilait un point
+    de restauration qui restaurait tout sauf la caméra.
+
+14. **L'éditeur autonome ne duplique aucune logique d'édition.** Il instancie le
+    même `Scene` et le même `PlanEditor` que la carte. Toute correction faite
+    d'un côté doit profiter à l'autre — si une fonctionnalité ne peut exister
+    que dans l'éditeur, elle passe par un champ de `setField` ou par
+    `PlanEditor.edit()`, jamais par une seconde implémentation.
+
+15. **Ce que l'éditeur écrit, il doit savoir le relire.** `cardYaml` →
+    `parseYaml` → `validateConfig` est un point fixe, vérifié : géométrie,
+    caméras et options identiques après un aller-retour, et un deuxième
+    aller-retour produit exactement le même texte. Un changement du writer sans
+    changement du reader est un bug qui ne se voit qu'à la réouverture.
 
 12. **La config est validée avant d'être touchée.** `validateConfig` échoue en
     nommant l'entrée et le champ fautifs. Une `TypeError` au-dessus d'une carte
@@ -123,6 +158,27 @@ c'est probablement le changement qui a tort.
 13. **Tout changement de pitch ou d'éclatement recadre.** Aplatir une vue à 45°
     rend la scène 40 % plus haute à l'écran ; séparer les étages y ajoute
     plusieurs mètres. Sans recadrage, le bâtiment quitte le canvas.
+    Corollaire : **le premier cadrage a lieu à la première mesure non nulle du
+    canvas**, pas à la construction. Home Assistant crée une carte avant de la
+    dimensionner — onglet inactif, colonne de maçonnerie, aperçu d'éditeur — et
+    `View.fit` sur un canvas de 0 × 0 est un no-op silencieux. Voir
+    `Scene.framed`.
+
+16. **Le lacet fait partie de la lecture, pas seulement l'inclinaison.** À lacet
+    0 on regarde dans l'axe +y : tous les murs est-ouest sont vus de profil et
+    une maison rectangulaire inclinée s'aplatit en élévation — la hauteur est
+    dessinée et invisible. D'où `VIEW_PRESETS` (Plan 0°/0°, 2.5D 45°/20°,
+    Relief 62°/32°) et un défaut à 2.5D. Ne jamais exposer un réglage
+    d'inclinaison seul : il permettrait de demander la 3D et de ne rien obtenir.
+    Le plan, lui, doit rester dans l'axe, sans quoi la grille cesse d'être une
+    règle.
+
+17. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
+    est dessiné comme une seule silhouette — objectif, puis le pourtour de
+    l'isovist dans l'ordre, fermé. Une seule passe : cent triangles translucides
+    partageant des arêtes se composeraient en bandes. Ne pas fabriquer une
+    seconde géométrie pour l'air : un faisceau arrêté par un mur en plan doit
+    l'être en l'air par construction.
 
 ## Conventions
 
@@ -141,16 +197,21 @@ c'est probablement le changement qui a tort.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173/  — aucune clé, aucun compte
+npm run dev        # http://localhost:5173/            — éditeur de plan autonome
+                   # http://localhost:5173/bench.html  — la carte, faux HA
 npm run typecheck
 npm run build      # dist/semaphore.js
 ```
 
+L'éditeur autonome (`studio/`) est la voie normale pour décrire une maison :
+plein écran, document local, export d'une config complète et import de celle qui
+tourne déjà dans Home Assistant. Il n'a aucune dépendance à `hass`.
+
 Le banc d'essai (`dev/`) fait tourner la vraie carte sans Home Assistant : faux
 `hass` implémentant seulement `states`, `connection.subscribeMessage` et
-`callWS`, plus un générateur de pistes Frigate synthétiques. `dev/main.ts`
-décrit une maison de 9 × 7 m sur deux niveaux, en mètres — modifiez-la, ou
-dessinez la vôtre avec le mode Plan.
+`callWS`, plus un générateur de pistes Frigate synthétiques. La maison de 9 × 7 m
+sur deux niveaux qu'il affiche est `sampleHouse()` dans `studio/project.ts` — une
+seule description, servie à l'éditeur comme au banc.
 
 Ne marchent pas hors HA : le flux vidéo du panneau focus, les vignettes
 `camera_proxy`.
@@ -188,10 +249,13 @@ HA ne peut trancher. Chacun a un repli qui évite que l'échec soit fatal.
 1. **Calibration 4 points dans l'éditeur.** Poser une caméra se fait à la
    souris, mais les correspondances image ↔ sol qui donnent les blips s'écrivent
    encore à la main. Il faut afficher le snapshot à côté du plan et cliquer
-   4 paires. Sans ça, pas de détections positionnées.
+   4 paires. Sans ça, pas de détections positionnées. C'est maintenant le seul
+   champ de la config qu'on ne peut pas produire à la souris — l'éditeur
+   autonome est l'endroit où le faire, puisqu'il peut lire une image du disque.
 2. **Calque de décalque complet.** `Underlay` est modélisé, rendu et sérialisé,
    et `applyScale()` existe ; il manque l'entrée d'URL et le geste « tracer une
-   longueur connue » dans l'interface.
+   longueur connue » dans l'interface. Là encore l'éditeur autonome peut prendre
+   un fichier local là où la carte ne peut prendre qu'une URL.
 3. **Rejeu complet.** Le curseur de timeline gèle déjà le temps de la scène ; il
    reste à rejouer les trajectoires historiques et à caler la vidéo dessus.
 4. **Éditeur Lovelace natif** (`getConfigElement`) pour écrire la config au lieu

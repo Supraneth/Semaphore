@@ -3,10 +3,12 @@ import { defineConfig } from 'vite';
 /**
  * Two jobs from one config.
  *
- * `vite` serves `index.html`, which boots the dev bench. `vite build` ignores
- * the HTML entirely and emits a single ES module, because a Lovelace resource
- * is one `<script type="module">` and HACS attaches exactly one file to a
- * release — so no chunking, no dynamic imports, no asset side-cars.
+ * `vite` serves `index.html`, the standalone plan editor, and `bench.html`, the
+ * card running against a fake Home Assistant. `vite build` ignores both and
+ * emits a single ES module, because a Lovelace resource is one
+ * `<script type="module">` and HACS attaches exactly one file to a release — so
+ * no chunking, no dynamic imports, no asset side-cars. Neither the editor nor
+ * the bench is ever part of that file.
  */
 export default defineConfig({
   build: {

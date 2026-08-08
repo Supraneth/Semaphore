@@ -20,8 +20,11 @@ function scalar(v: unknown): string {
   }
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   const s = String(v);
-  // Quote anything YAML could misread as a number, bool, or special token.
-  return /^[A-Za-z_][\w .'\-àâäçéèêëîïôöùûüÿœæÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ]*$/.test(s) &&
+  // Quote anything YAML could misread as a number, bool, or special token. A
+  // colon is allowed as long as no space follows it, which is what lets
+  // `custom:semaphore-card` be written the way every other card writes it —
+  // quoting it is legal but reads as a mistake in a config people diff by eye.
+  return /^[A-Za-z_][\w .'\-àâäçéèêëîïôöùûüÿœæÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ]*(:[^\s]+)?$/.test(s) &&
     !['true', 'false', 'null', 'yes', 'no', 'on', 'off'].includes(s.toLowerCase())
     ? s
     : JSON.stringify(s);
@@ -100,12 +103,59 @@ export function toYaml(value: Record<string, unknown>): string {
  * you can read rather than a wholesale dump to diff by eye.
  */
 export function planYaml(config: SemaphoreConfig): string {
+  return toYaml(planBody(config));
+}
+
+/**
+ * The whole card configuration, ready to paste.
+ *
+ * `planYaml` emits the block the in-card editor owns, which assumes the rest of
+ * the config already exists around it. The standalone editor has no such
+ * surrounding config: what it produces is the entire card, `type` line
+ * included, or the user has to assemble two halves by hand — which is where a
+ * working plan turns into a card that will not load.
+ */
+export function cardYaml(config: SemaphoreConfig): string {
+  const strings = (v: unknown): string[] | undefined =>
+    Array.isArray(v) && v.length ? (v as string[]) : undefined;
+
+  // Scalars first, then the two long blocks. A reader scanning the pasted
+  // config finds every knob in the first dozen lines instead of hunting for
+  // `decay-seconds` under two hundred coordinates.
+  return toYaml({
+    type: config.type || 'custom:semaphore-card',
+    'topic-prefix': config['topic-prefix'],
+    'instance-id': config['instance-id'],
+    'box-format': config['box-format'] === 'auto' ? undefined : config['box-format'],
+    'alert-labels': strings(config['alert-labels']),
+    'timeline-hours': config['timeline-hours'],
+    'decay-seconds': config['decay-seconds'],
+    'orbit-speed': config['orbit-speed'],
+    'orbit-resume': config['orbit-resume'],
+    'fov-resolution': config['fov-resolution'],
+    ...planBody(config, { view: true }),
+  });
+}
+
+function planBody(
+  config: SemaphoreConfig,
+  options: { view?: boolean } = {},
+): Record<string, unknown> {
   const round = (n: number | undefined, places = 2): number | undefined =>
     n === undefined ? undefined : Math.round(n * 10 ** places) / 10 ** places;
   const pt = (p: [number, number]): [number, number] => [round(p[0])!, round(p[1])!];
 
-  return toYaml({
+  return {
     grid: config.grid,
+    view:
+      options.view && config.view
+        ? {
+            yaw: round(config.view.yaw, 1),
+            pitch: round(config.view.pitch, 1),
+            zoom: round(config.view.zoom, 1),
+            center: config.view.center ? pt(config.view.center) : undefined,
+          }
+        : undefined,
     levels: config.levels.map((l) => ({
       id: l.id,
       name: l.name,
@@ -154,12 +204,13 @@ export function planYaml(config: SemaphoreConfig): string {
       azimuth: Math.round(c.azimuth),
       fov: Math.round(c.fov),
       range: round(c.range, 1),
+      entity: c.entity,
       resolution: c.resolution,
       calibration: c.calibration
         ? { image: c.calibration.image, ground: c.calibration.ground.map(pt) }
         : undefined,
     })),
-  });
+  };
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {

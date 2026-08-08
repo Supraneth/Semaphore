@@ -1,4 +1,4 @@
-import type { Level } from '../types';
+import type { CameraConfig, Level } from '../types';
 
 /**
  * Undo and redo.
@@ -13,15 +13,26 @@ import type { Level } from '../types';
  * you can return to, and the live document is never in it. An earlier version
  * also cached "the last captured state" and compared against that, which made
  * the cache lag one mutation behind and sent the first undo two steps back.
+ *
+ * The snapshot covers the cameras as well as the levels. It once covered only
+ * the levels, which meant placing or deleting a camera pushed a restore point
+ * that restored everything except the camera — the one edit where undo silently
+ * did nothing.
  */
 
 const LIMIT = 120;
+
+/** Everything an edit can touch, and therefore everything undo must restore. */
+export interface PlanDocument {
+  levels: Level[];
+  cameras: CameraConfig[];
+}
 
 export class History {
   private past: string[] = [];
   private future: string[] = [];
 
-  constructor(private read: () => Level[], private write: (levels: Level[]) => void) {}
+  constructor(private read: () => PlanDocument, private write: (doc: PlanDocument) => void) {}
 
   private serialise(): string {
     return JSON.stringify(this.read());
@@ -64,7 +75,7 @@ export class History {
     const previous = this.past.pop();
     if (previous === undefined) return false;
     this.future.push(this.serialise());
-    this.write(JSON.parse(previous) as Level[]);
+    this.write(JSON.parse(previous) as PlanDocument);
     return true;
   }
 
@@ -72,7 +83,7 @@ export class History {
     const next = this.future.pop();
     if (next === undefined) return false;
     this.past.push(this.serialise());
-    this.write(JSON.parse(next) as Level[]);
+    this.write(JSON.parse(next) as PlanDocument);
     return true;
   }
 

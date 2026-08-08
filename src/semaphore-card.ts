@@ -9,6 +9,7 @@ import { FrigateBridge } from './frigate';
 import { STATE_STYLES } from './theme';
 import { styles } from './semaphore-card-css';
 import type { PlanEditor, Tool } from './plan/editor';
+import { DEFAULT_VIEW, VIEW_PRESETS, presetOf, type ViewPreset } from './plan/view';
 import { findWall } from './plan/geometry';
 import { copyToClipboard, planYaml } from './plan/yaml';
 
@@ -34,6 +35,13 @@ export class SemaphoreCard extends LitElement {
   @state() private activeLevel = '';
   @state() private exploded = false;
   @state() private editing = false;
+  /**
+   * The reading the user asked for, restored when the editor closes.
+   *
+   * Undefined once they have orbited by hand: no preset button should claim
+   * credit for an angle the user found themselves.
+   */
+  @state() private preset: ViewPreset | undefined = DEFAULT_VIEW;
   @state() private tool: Tool = 'select';
   @state() private showGrid = true;
   @state() private events: Detection[] = [];
@@ -66,6 +74,10 @@ export class SemaphoreCard extends LitElement {
     this.config = result.config;
     this.migrated = result.migrated;
     this.activeLevel = this.config.levels[0].id;
+    const view = this.config.view;
+    this.preset = view
+      ? presetOf(view.yaw ?? DEFAULT_VIEW.yaw, view.pitch ?? DEFAULT_VIEW.pitch)
+      : DEFAULT_VIEW;
   }
 
   getCardSize(): number {
@@ -225,6 +237,8 @@ export class SemaphoreCard extends LitElement {
 
   private focusCamera(name: string): void {
     this.focused = name;
+    // Focusing flies to the lens's own heading, which is no preset's angle.
+    this.preset = undefined;
     this.scene?.focus(name);
   }
 
@@ -243,6 +257,12 @@ export class SemaphoreCard extends LitElement {
     this.scene?.setExploded(this.exploded ? 3.2 : 0);
   }
 
+  private applyPreset(preset: ViewPreset): void {
+    this.preset = preset;
+    this.scene?.applyPreset(preset);
+    this.requestUpdate();
+  }
+
   private toggleGrid(): void {
     this.showGrid = !this.showGrid;
     if (this.scene) {
@@ -255,15 +275,9 @@ export class SemaphoreCard extends LitElement {
     this.editing = !this.editing;
     if (this.editing) {
       this.unfocus();
-      // Tracing in a tilted view is guesswork. Editing starts flat, and the
-      // user can tilt back with a right-drag whenever they want to check it.
-      if (this.scene) {
-        this.scene.view.pitch = 0;
-        this.scene.view.refresh();
-        // Flattening makes the same scene ~40% taller on screen, so it has to
-        // be re-framed or it spills off the canvas.
-        this.scene.frame();
-      }
+      // Tracing in a tilted view is guesswork, and tracing off-axis is worse:
+      // the grid stops lining up with the screen. Editing starts in plan.
+      this.scene?.applyPreset(VIEW_PRESETS[0]);
       this.editor = this.scene?.enableEditor(() => {
         this.revision++;
         this.requestUpdate();
@@ -272,11 +286,8 @@ export class SemaphoreCard extends LitElement {
     } else {
       this.scene?.disableEditor();
       this.editor = undefined;
-      if (this.scene) {
-        this.scene.view.pitch = 45;
-        this.scene.view.refresh();
-        this.scene.frame();
-      }
+      // Back to the reading the user was on, not to an arbitrary angle.
+      this.applyPreset(this.preset ?? DEFAULT_VIEW);
     }
     this.requestUpdate();
   }
@@ -377,8 +388,19 @@ export class SemaphoreCard extends LitElement {
               ${this.exploded ? 'Empiler' : 'Séparer'}
             </button>`
           : nothing}
+        ${this.editing
+          ? nothing
+          : html`<div class="group">
+              ${VIEW_PRESETS.map(
+                (p) => html`<button
+                  aria-pressed=${this.preset?.id === p.id}
+                  title="${p.label} — ${p.pitch}° d'inclinaison"
+                  @click=${() => this.applyPreset(p)}
+                >${p.label}</button>`,
+              )}
+            </div>`}
         <button aria-pressed=${this.showGrid} @click=${this.toggleGrid} title="Grille">Grille</button>
-        <button aria-pressed=${this.editing} @click=${this.toggleEditing}>Plan</button>
+        <button aria-pressed=${this.editing} @click=${this.toggleEditing}>Dessiner</button>
         <button @click=${() => this.scene?.frame()} title="Tout cadrer">Cadrer</button>
       </div>
     `;

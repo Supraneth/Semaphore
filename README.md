@@ -8,6 +8,12 @@ mètres, sur une grille.
 
 ![Sémaphore : plan en 2.5D, cônes de vision arrêtés par les murs](docs/semaphore.png)
 
+> **Dessinez votre maison hors de Home Assistant.**
+> `npm run dev` ouvre un **éditeur de plan autonome**, plein écran, sans compte
+> ni serveur : vous tracez les murs, posez les caméras, puis vous exportez un
+> bloc YAML que vous collez dans votre carte. Voir
+> [L'éditeur autonome](#léditeur-autonome).
+
 ---
 
 ## Le parti pris
@@ -62,6 +68,14 @@ clique un point, on obtient ce point. Le pitch 0 donne un plan à plat pour
 tracer ; le pitch 45 donne la lecture 2.5D. C'est la même caméra, sans
 changement de mode.
 
+**Le lacet compte autant que l'inclinaison.** Regarder droit dans l'axe +y met
+tous les murs est-ouest exactement de profil : une maison rectangulaire inclinée
+à 45° s'aplatit alors en élévation, la hauteur est dessinée et rigoureusement
+invisible. Un quart de tour hors axe montre deux faces de chaque angle, et le
+volume se lit d'un coup d'œil. D'où trois **préréglages de vue** — Plan (0°,
+dans l'axe), 2.5D (45°, 20° de lacet), Relief (62°, 32°) — plutôt qu'un simple
+réglage d'inclinaison.
+
 ### 4. Canvas 2D, pas WebGL
 
 Une maison fait quelques centaines de polygones. Le GPU n'apportait rien et
@@ -70,10 +84,48 @@ complet fait **40 kB gzip**, sans autre dépendance que Lit.
 
 ---
 
-## L'éditeur de plan
+## L'éditeur autonome
 
-Bouton **Plan** dans le rail. La vue s'aplatit, la grille apparaît, la couverture
-s'estompe pour ne pas masquer ce que vous tracez.
+```bash
+npm install
+npm run dev          # http://localhost:5173/
+```
+
+Une application de bureau dans le navigateur : **aucune clé, aucun compte, aucun
+Home Assistant**. C'est le même éditeur et le même moteur de rendu que dans la
+carte — ce que vous voyez à l'écran est ce que la carte dessinera — mais avec la
+fenêtre entière, un document à lui, et un export qui produit une configuration
+complète.
+
+Le cycle tient en trois gestes :
+
+1. **Tracer.** Murs, pièces, portes, caméras, sur une grille en mètres.
+2. **Exporter.** Le bouton *Exporter le YAML* donne le bloc entier, ligne
+   `type:` comprise. Copier, ou télécharger un `.yaml`.
+3. **Coller** dans Home Assistant : *Modifier le tableau de bord* → *Ajouter une
+   carte* → *Manuel*.
+
+Et retour : **Importer…** relit la configuration que vous avez déjà dans Home
+Assistant — collée, ou déposée en glissant un fichier sur la page — y compris
+depuis une pile de cartes. Un YAML fautif est refusé **en nommant la ligne**,
+sans toucher au plan à l'écran.
+
+Ce que l'éditeur ajoute par rapport au mode Plan de la carte :
+
+- **Gestion des niveaux** : ajouter, dupliquer (tous les identifiants
+  régénérés), supprimer, régler altitude et hauteur sous plafond. **Séparer**
+  écarte les étages pour les voir tous à la fois.
+- **Options de la carte** : préfixe MQTT, fenêtre de timeline, décroissance,
+  étiquettes d'alerte, format des box — dans des champs plutôt qu'à la main.
+- **Contrôles permanents** : ce qui empêchera la carte de charger, et ce qui la
+  laissera charger sans rien faire d'utile — une caméra sans calibration, des
+  pièces sans murs, une ouverture qui déborde de son mur.
+- **Couverture réelle** d'une caméra sélectionnée, en pourcentage du secteur
+  théorique : 30 % veut dire qu'elle regarde surtout un mur.
+- **Enregistrement automatique** dans le navigateur : un rechargement ne perd
+  rien.
+
+Le bouton **Dessiner** reste dans la carte pour une retouche rapide sur place.
 
 | Outil | Raccourci | Geste |
 |---|---|---|
@@ -105,10 +157,34 @@ s'estompe pour ne pas masquer ce que vous tracez.
 Navigation : molette pour zoomer, clic droit glissé pour pivoter et incliner,
 `Alt` ou clic milieu pour déplacer.
 
-Le bouton **Copier le YAML** met le bloc `levels` + `cameras` dans le
-presse-papier. Si Home Assistant tourne en HTTP simple — où l'API presse-papier
-n'existe pas — le bloc s'affiche pour sélection manuelle plutôt que d'échouer en
-silence.
+Dans la carte, le bouton **Copier le YAML** met le bloc `levels` + `cameras` dans
+le presse-papier. Si Home Assistant tourne en HTTP simple — où l'API
+presse-papier n'existe pas — le bloc s'affiche pour sélection manuelle plutôt que
+d'échouer en silence.
+
+---
+
+## Ce que la 2.5D montre
+
+Le rail de la carte porte trois boutons de vue — **Plan**, **2.5D**, **Relief**.
+Ils changent l'inclinaison *et* le lacet ensemble, parce que l'un sans l'autre ne
+donne pas de volume (voir la décision 3). Un tableau de bord n'a pas de
+clic droit : sans ces boutons, une carte ne pourrait être vue qu'à l'angle avec
+lequel sa config a été écrite.
+
+Une fois inclinée, la scène dit trois choses qu'un plan ne peut pas dire :
+
+- **La hauteur des murs.** Chaque tronçon plein est extrudé en boîte, faces
+  arrière éliminées, triées du plus loin au plus près. Une porte est un vrai
+  trou : on voit à travers, avec son linteau au-dessus et son allège en dessous.
+- **Le volume de couverture.** Le secteur n'est plus une flaque au sol : c'est le
+  tronc de cône réel, apex à l'objectif, base sur l'isovist. La même
+  géométrie sert aux deux, donc un faisceau qui s'arrête à un mur en plan
+  s'arrête à ce mur en l'air aussi. En vue Plan il disparaît de lui-même — un
+  cône vu de dessus n'a pas de silhouette.
+- **La hauteur de pose.** Un trait tireté descend de l'objectif jusqu'au sol, où
+  une ellipse marque l'emplacement au sol. Une caméra à 2,30 m et une caméra
+  posée par terre ne voient pas la même chose, et le plan seul les confond.
 
 ---
 
@@ -137,8 +213,8 @@ cameras:
 ```
 
 Le reste a des valeurs par défaut (`azimuth: 0`, `fov: 90`, `range: 8`,
-`height: 2.6`). En pratique vous ne l'écrirez pas à la main : dessinez avec le
-mode Plan, puis **Copier le YAML**.
+`height: 2.6`). En pratique vous ne l'écrirez pas à la main : dessinez dans
+[l'éditeur autonome](#léditeur-autonome), puis collez ce qu'il exporte.
 
 <details>
 <summary>Configuration complète</summary>
@@ -220,15 +296,16 @@ box-format: xywh    # ou xyxy
 
 ## Voir la carte sans Home Assistant
 
-```bash
-npm install
-npm run dev
-```
+Le même serveur sert deux pages :
 
-Puis `http://localhost:5173/`. **Aucune clé, aucun compte.** Le banc d'essai fait
-tourner la vraie carte avec un faux Home Assistant qui rejoue des événements
-Frigate synthétiques. `dev/main.ts` décrit une maison de 9 × 7 m sur deux
-niveaux — modifiez-la, ou dessinez la vôtre.
+| Adresse | Ce que c'est |
+|---|---|
+| `http://localhost:5173/` | l'éditeur de plan autonome |
+| `http://localhost:5173/bench.html` | la **vraie carte**, avec un faux Home Assistant |
+
+Le banc d'essai rejoue des événements Frigate synthétiques sur la maison
+d'exemple, ce qui permet de voir les secteurs s'allumer, les blips se poser et la
+timeline se remplir. **Aucune clé, aucun compte.**
 
 Ce qui ne marche pas hors HA : le flux vidéo du panneau focus et les vraies
 vignettes `camera_proxy`.
@@ -270,6 +347,10 @@ un vrai Home Assistant.
 | `vite build` | `dist/semaphore.js`, **40 kB gzip** |
 | Rendu réel (Chromium headless) | le canvas se peint, aucune erreur console |
 | Éditeur de bout en bout | chaîne de murs, longueur tapée (4,20 m → 4,200 m), annuler/refaire au geste près, percement d'une porte, copie YAML |
+| Éditeur autonome piloté (Chromium headless, 32 contrôles) | tracé, longueur au clavier, annuler/refaire, pose et annulation d'une caméra, ajout et duplication de niveau, import d'un YAML écrit à la main, refus d'un YAML fautif en nommant la ligne, persistance après rechargement, export relu |
+| Aller-retour YAML | `écrire → relire → réécrire` est un point fixe : géométrie, caméras et options identiques |
+| Cadrage dans les conditions de Home Assistant | une carte créée dans un conteneur de 0 × 0 puis dimensionnée se cadre dès qu'elle reçoit des pixels ; une config portant sa propre `view` est laissée où elle est |
+| Lecture 2.5D | volume de couverture et mât peints à 45°, absents à plat ; les trois préréglages changent bien inclinaison et lacet |
 | MQTT → box → homographie → traînée | piste synthétique conforme |
 | 45 contrôles numériques | ouvertures et ligne de vue, `project`/`unproject` exactement inverses, hiérarchie d'accrochage, migration en mètres, YAML relu par `js-yaml` |
 
@@ -286,6 +367,8 @@ ne la restaure pas en sortant.
 
 1. **La calibration à 4 points dans l'éditeur** — placer les caméras se fait à la
    souris, mais les correspondances image ↔ sol s'écrivent encore à la main.
+   L'éditeur autonome les conserve à l'import et à l'export, et signale les
+   caméras qui n'en ont pas ; il ne permet pas encore de les cliquer.
 2. **Le calque de décalque** — modélisé, rendu et sérialisé ; il manque l'entrée
    d'URL et le geste « tracer une longueur connue » dans l'interface.
 3. **Le rejeu complet** — le curseur gèle déjà le temps de la scène ; il reste à

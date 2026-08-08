@@ -23,5 +23,5 @@
     "noEmit": true,
     "types": ["geojson"]
   },
-  "include": ["src", "dev", "vite.config.ts"]
+  "include": ["src", "dev", "studio", "vite.config.ts"]
 }

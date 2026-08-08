@@ -84,16 +84,32 @@ export class PlanEditor {
     private host: EditorHost,
   ) {
     this.history = new History(
-      () => this.host.levels,
-      (levels) => {
+      () => ({ levels: this.host.levels, cameras: this.host.cameras }),
+      (doc) => {
         // Replace in place: the card, the renderer and the isovist cache all
-        // hold this same array.
+        // hold these same two arrays.
         this.host.levels.length = 0;
-        this.host.levels.push(...levels);
+        this.host.levels.push(...doc.levels);
+        this.host.cameras.length = 0;
+        this.host.cameras.push(...doc.cameras);
         this.selection = null;
         this.host.onChange();
       },
     );
+  }
+
+  /**
+   * Runs an edit made from a panel rather than from the canvas.
+   *
+   * Same contract as every gesture: one restore point pushed before the
+   * mutation, one change reported after it. Without this the side panels would
+   * each have to reach for `history` and `onChange` and one of them would
+   * eventually forget.
+   */
+  edit(mutate: () => void): void {
+    this.history.capture();
+    mutate();
+    this.host.onChange();
   }
 
   // ---- lifecycle ----------------------------------------------------------
@@ -841,8 +857,29 @@ export class PlanEditor {
         if (field === 'fov') cam.fov = Math.min(340, Math.max(10, value));
         if (field === 'range') cam.range = Math.max(1, value);
         if (field === 'height') cam.height = Math.max(0, value);
+        // Resolution is only ever read as a pair, but it is typed one box at a
+        // time, so a half-filled pair has to stay legal until the second box.
+        if (field === 'width' || field === 'height-px') {
+          const [w, h] = cam.resolution ?? [1920, 1080];
+          const px = Math.max(1, Math.round(value));
+          cam.resolution = field === 'width' ? [px, h] : [w, px];
+        }
       }
-      if (field === 'name' && typeof value === 'string' && value.trim()) cam.name = value.trim();
+      if (typeof value === 'string') {
+        if (field === 'name') {
+          const next = value.trim();
+          // A duplicate name would pass the editor and fail validation on the
+          // way into Home Assistant, which is exactly the class of error this
+          // editor exists to prevent.
+          const taken = this.host.cameras.some((c) => c !== cam && c.name === next);
+          if (next && !taken) {
+            cam.name = next;
+            this.selection = { kind: 'camera', id: next };
+          }
+        }
+        if (field === 'entity') cam.entity = value.trim() || undefined;
+        if (field === 'level' && this.host.levels.some((l) => l.id === value)) cam.level = value;
+      }
     }
 
     this.host.onChange();

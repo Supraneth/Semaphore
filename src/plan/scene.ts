@@ -10,7 +10,7 @@ import type {
 import { computeIsovist, type Segment } from '../fov';
 import { STATE_STYLES } from '../theme';
 import { Renderer } from './renderer';
-import { View } from './view';
+import { DEFAULT_VIEW, View, type ViewPreset } from './view';
 import { PlanEditor } from './editor';
 import { allPoints, occludersFor } from './geometry';
 
@@ -60,8 +60,10 @@ export class Scene {
     private cb: SceneCallbacks,
   ) {
     this.view = new View({
-      yaw: config.view?.yaw ?? 0,
-      pitch: config.view?.pitch ?? 45,
+      // Not yaw 0: that is the one angle at which a tilted view of a
+      // rectangular house shows no height at all. See `VIEW_PRESETS`.
+      yaw: config.view?.yaw ?? DEFAULT_VIEW.yaw,
+      pitch: config.view?.pitch ?? DEFAULT_VIEW.pitch,
       zoom: config.view?.zoom ?? 34,
       center: config.view?.center ?? [0, 0],
     });
@@ -91,6 +93,14 @@ export class Scene {
       const rect = host.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       this.renderer.resize(rect.width, rect.height);
+      // Home Assistant lays a card out *after* creating it — a dashboard view
+      // that is not the active tab, a masonry column that sizes on the next
+      // frame, the card editor's preview pane. Framing against a zero-sized
+      // canvas is a silent no-op (`View.fit` cannot divide by no pixels), so
+      // the scene stayed at the default zoom over the origin and the house sat
+      // off-screen. The first measurement that yields real pixels is therefore
+      // where framing has to happen, not construction time.
+      if (!this.framed && !this.config.view?.center) this.frame();
       this.invalidate();
     };
     measure();
@@ -98,9 +108,6 @@ export class Scene {
     this.resizeObserver = new ResizeObserver(measure);
     this.resizeObserver.observe(host);
 
-    // Nothing was ever framed, so the first view is fitted to the scene rather
-    // than dropped at an arbitrary zoom over an empty grid.
-    if (!this.config.view?.center) this.frame();
     this.rebuildOccluders();
     this.start();
   }
@@ -118,8 +125,28 @@ export class Scene {
     else this.start();
   }
 
+  /**
+   * Snaps the camera to one of the three readings.
+   *
+   * Both the card and the standalone editor go through here, so "2.5D" means
+   * the same thing in both — and the re-frame that a pitch change requires
+   * cannot be forgotten by one of them.
+   */
+  applyPreset(preset: ViewPreset): void {
+    this.view.yaw = preset.yaw;
+    this.view.pitch = preset.pitch;
+    this.view.refresh();
+    this.frame();
+    this.noteInteraction();
+  }
+
+  /** True once the scene has been fitted against a canvas with real pixels. */
+  private framed = false;
+
   /** Frames everything the scene contains. */
   frame(): void {
+    if (!this.view.width || !this.view.height) return;
+    this.framed = true;
     const points = allPoints(
       this.config.levels,
       this.config.cameras.map((c) => c.position),

@@ -3,6 +3,39 @@ import type { Point } from '../types';
 const DEG = Math.PI / 180;
 
 /**
+ * The three readings of the same camera.
+ *
+ * The yaw matters as much as the pitch, and that is not obvious. Looking
+ * straight down +y — yaw 0 — puts every east-west wall exactly edge-on, so a
+ * rectangular house seen at 45° collapses into a flat elevation: the height is
+ * being drawn and none of it is visible. A quarter-turn off axis shows two
+ * faces of every corner, which is the whole of what makes a volume read at a
+ * glance. A plan is the opposite case and must stay axis-aligned, or the grid
+ * stops being something you can measure against.
+ *
+ * Hence presets rather than a bare tilt control: pitch alone cannot express
+ * "show me this as a solid".
+ */
+export const VIEW_PRESETS = [
+  { id: 'plan', label: 'Plan', pitch: 0, yaw: 0 },
+  { id: 'iso', label: '2.5D', pitch: 45, yaw: 20 },
+  { id: 'relief', label: 'Relief', pitch: 62, yaw: 32 },
+] as const;
+
+export type ViewPreset = (typeof VIEW_PRESETS)[number];
+
+/** What a scene opens on when its config does not say. */
+export const DEFAULT_VIEW = VIEW_PRESETS[1];
+
+/** Which preset a camera is currently sitting on, if any. */
+export function presetOf(yaw: number, pitch: number): ViewPreset | undefined {
+  const turn = ((yaw % 360) + 360) % 360;
+  return VIEW_PRESETS.find(
+    (p) => Math.abs(p.pitch - pitch) < 1 && Math.abs(((p.yaw - turn + 540) % 360) - 180) < 1,
+  );
+}
+
+/**
  * The 2.5D camera.
  *
  * Deliberately **orthographic**, not perspective. A perspective view is prettier

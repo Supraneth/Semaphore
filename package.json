@@ -1,6 +1,6 @@
 {
   "name": "semaphore-card",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Vos caméras Frigate en scène 2.5D : secteurs de vision, détections au sol, rejeu.",
   "license": "MIT",
   "type": "module",

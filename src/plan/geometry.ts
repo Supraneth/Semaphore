@@ -14,6 +14,8 @@ import type { Segment } from '../fov';
 
 export const DEFAULT_THICKNESS = 0.2;
 export const DEFAULT_WALL_HEIGHT = 2.5;
+/** Mount height of a camera whose config does not say. Matches `config.ts`. */
+export const DEFAULT_MOUNT_HEIGHT = 2.6;
 
 export const sub = (a: Point, b: Point): Point => [a[0] - b[0], a[1] - b[1]];
 export const len = (v: Point): number => Math.hypot(v[0], v[1]);

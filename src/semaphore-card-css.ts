@@ -83,6 +83,12 @@ export const styles = css`
     align-items: flex-start;
   }
 
+  /* The tilt presets read as one control, not three unrelated pills. */
+  .rail .group {
+    display: flex;
+    gap: 3px;
+  }
+
   .rail button,
   .panel header button,
   .editor button {

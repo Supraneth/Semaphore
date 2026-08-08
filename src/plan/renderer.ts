@@ -2,6 +2,7 @@ import type { CameraRuntime, Detection, Level, Point } from '../types';
 import { CHART, STATE_STYLES, labelCss, withAlpha } from '../theme';
 import { View } from './view';
 import {
+  DEFAULT_MOUNT_HEIGHT,
   along,
   area,
   centroid,
@@ -119,11 +120,8 @@ export class Renderer {
 
     // Coverage sits just above the floor of its own storey, and only on a
     // storey that is actually on screen.
-    for (const rt of input.runtimes) {
-      const level = this.levelOf(levels, rt.config.level, activeIndex);
-      if (!shown.some((s) => s.level.id === level.level.id)) continue;
-      const z = this.levelZ(level.level, level.index, input) + 0.02;
-      this.drawSector(rt, z, input, level.level.id === input.activeLevel);
+    for (const { rt, base, visible } of this.placedCameras(input, levels, activeIndex, shown)) {
+      this.drawSector(rt, base + 0.02, base + mountHeight(rt), input, visible);
     }
 
     this.drawTrails(input, levels, activeIndex);
@@ -136,6 +134,32 @@ export class Renderer {
     for (const { level, index } of shown) {
       this.drawRoomLabels(level, this.levelZ(level, index, input));
     }
+
+    // Last, over the walls: the mast is an annotation, and it has to reach the
+    // chip that floats above the canvas at the same height.
+    for (const { rt, base, visible } of this.placedCameras(input, levels, activeIndex, shown)) {
+      this.drawCameraMast(rt, base, base + mountHeight(rt), visible ? 1 : 0.45);
+    }
+  }
+
+  /** Each camera with the storey height it hangs from, skipping hidden ones. */
+  private placedCameras(
+    input: RenderInput,
+    levels: Level[],
+    activeIndex: number,
+    shown: Array<{ level: Level; index: number }>,
+  ): Array<{ rt: CameraRuntime; base: number; visible: boolean }> {
+    const out: Array<{ rt: CameraRuntime; base: number; visible: boolean }> = [];
+    for (const rt of input.runtimes) {
+      const level = this.levelOf(levels, rt.config.level, activeIndex);
+      if (!shown.some((s) => s.level.id === level.level.id)) continue;
+      out.push({
+        rt,
+        base: this.levelZ(level.level, level.index, input),
+        visible: level.level.id === input.activeLevel,
+      });
+    }
+    return out;
   }
 
   private levelZ(level: Level, index: number, input: RenderInput): number {
@@ -440,7 +464,13 @@ export class Renderer {
 
   // ---- coverage -----------------------------------------------------------
 
-  private drawSector(rt: CameraRuntime, z: number, input: RenderInput, visible: boolean): void {
+  private drawSector(
+    rt: CameraRuntime,
+    z: number,
+    lensZ: number,
+    input: RenderInput,
+    visible: boolean,
+  ): void {
     const iso = rt.isovist;
     if (iso.length < 3) return;
 
@@ -480,6 +510,101 @@ export class Renderer {
     if (style.sweep > 0 && !input.reducedMotion && visible) {
       this.drawSweep(path, apex, radiusPixels, style.css, style.sweep, input.time, dim);
     }
+
+    this.drawSectorVolume(rt, z, lensZ, dim);
+  }
+
+  /**
+   * The coverage as a solid, not a puddle.
+   *
+   * A camera three metres up watching a hallway was drawn as a shape lying on
+   * the floor, which says nothing about where the lens is or what it means for
+   * the sector to be *its*. The honest object is the frustum: apex at the lens,
+   * base the isovist on the floor. Filling the silhouette — lens, then the rim
+   * in order, closed — draws that ruled surface in a single path, so the
+   * translucent fill stays even instead of banding along a hundred shared
+   * triangle edges.
+   *
+   * The same polygon still drives it, so a beam that stops at a wall in plan
+   * stops at that wall in the air too. There is no second geometry.
+   */
+  private drawSectorVolume(rt: CameraRuntime, floorZ: number, lensZ: number, dim: number): void {
+    const { ctx, view } = this;
+    const iso = rt.isovist;
+    const lens = view.projectPoint(iso[0], lensZ);
+    const ground = view.projectPoint(iso[0], floorZ);
+
+    // Flat on: the lens lands on its own floor point and the frustum has no
+    // silhouette left to draw. This is what makes the plan view stay a plan.
+    const rise = ground[1] - lens[1];
+    if (rise < 6) return;
+
+    const path = new Path2D();
+    path.moveTo(lens[0], lens[1]);
+    let first: Point | null = null;
+    let last: Point | null = null;
+    for (let i = 1; i < iso.length; i++) {
+      const s = view.projectPoint(iso[i], floorZ);
+      path.lineTo(s[0], s[1]);
+      first ??= s;
+      last = s;
+    }
+    if (!first || !last) return;
+    path.closePath();
+
+    // Light in the air: brightest at the lens, spent by the time it reaches the
+    // floor, where the sector pool takes over. The axis is the vertical rise,
+    // so anything past the ground clamps to the last stop.
+    const style = STATE_STYLES[rt.state];
+    const gradient = ctx.createLinearGradient(lens[0], lens[1], ground[0], ground[1]);
+    gradient.addColorStop(0, withAlpha(style.css, style.intensity * 0.55 * dim));
+    gradient.addColorStop(1, withAlpha(style.css, style.intensity * 0.07 * dim));
+    ctx.fillStyle = gradient;
+    ctx.fill(path);
+
+    // The two extreme rays. Without them a cone reads as a smear; with them the
+    // eye finds the apex immediately.
+    ctx.strokeStyle = withAlpha(style.css, 0.3 * dim);
+    ctx.lineWidth = 1;
+    for (const end of [first, last]) {
+      ctx.beginPath();
+      ctx.moveTo(lens[0], lens[1]);
+      ctx.lineTo(end[0], end[1]);
+      ctx.stroke();
+    }
+  }
+
+  /**
+   * The mast, from the lens down to the floor, and the footprint it stands over.
+   *
+   * Height is the one property of a camera that a plan cannot show and that
+   * changes what it sees. The dashed line is also what ties the floating chip
+   * back to a place on the floor.
+   */
+  private drawCameraMast(rt: CameraRuntime, floorZ: number, lensZ: number, dim: number): void {
+    const { ctx, view } = this;
+    const ground = view.projectPoint(rt.config.position, floorZ);
+    const lens = view.projectPoint(rt.config.position, lensZ);
+    if (ground[1] - lens[1] < 4) return;
+
+    const style = STATE_STYLES[rt.state];
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = withAlpha(style.css, 0.5 * dim);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(ground[0], ground[1]);
+    ctx.lineTo(lens[0], lens[1]);
+    ctx.stroke();
+    ctx.restore();
+
+    // A circle on the floor is an ellipse on screen, squashed by the pitch —
+    // which is exactly what makes it read as lying on the ground.
+    const squash = Math.cos((view.pitch * Math.PI) / 180);
+    ctx.beginPath();
+    ctx.ellipse(ground[0], ground[1], 4, Math.max(0.5, 4 * squash), 0, 0, Math.PI * 2);
+    ctx.fillStyle = withAlpha(style.css, 0.55 * dim);
+    ctx.fill();
   }
 
   /**
@@ -705,6 +830,8 @@ export class Renderer {
     return this.view.projectPoint(p, z);
   }
 }
+
+const mountHeight = (rt: CameraRuntime): number => rt.config.height ?? DEFAULT_MOUNT_HEIGHT;
 
 export function pointOnBearing(from: Point, bearingDeg: number, metres: number): Point {
   const t = (bearingDeg * Math.PI) / 180;

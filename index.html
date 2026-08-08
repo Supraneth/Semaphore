@@ -3,34 +3,27 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sémaphore — banc d'essai</title>
+    <title>Sémaphore — éditeur de plan</title>
     <style>
       :root {
         color-scheme: dark;
-        /* The bench stands in for the Home Assistant theme variables the card
-           reads, so the chrome looks the way it will on a dashboard. */
-        --primary-text-color: #efe7d4;
-        --secondary-text-color: #5b7285;
-        --card-background-color: #101820;
-        --ha-card-border-radius: 14px;
       }
       html,
-      body {
-        margin: 0;
-        min-height: 100%;
-        background: #08131c;
-        color: var(--primary-text-color);
-        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      }
+      body,
       #app {
-        max-width: 1080px;
-        margin: 0 auto;
-        padding: 24px 16px 48px;
+        margin: 0;
+        height: 100%;
+      }
+      /* The editor owns the window: it sizes its canvas from the space it is
+         given, so the page must never be the thing that scrolls. */
+      body {
+        overflow: hidden;
+        background: #0c2233;
       }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/dev/main.ts"></script>
+    <script type="module" src="/studio/main.ts"></script>
   </body>
 </html>
