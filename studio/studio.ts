@@ -373,8 +373,16 @@ export class SemaphoreStudio extends LitElement {
    * plan reached Home Assistant. These are decisions about how the scene looks,
    * so they travel with it.
    */
-  private toggleFlag(key: 'show-grid' | 'show-labels'): void {
+  private toggleFlag(key: 'show-grid' | 'show-labels' | 'show-timeline'): void {
     this.write(key, this.config[key] === false);
+  }
+
+  /** A blank pixel field means "let the card decide", not "zero pixels tall". */
+  private setSize(key: 'height' | 'max-height', raw: string): void {
+    const text = raw.trim();
+    if (!text) return this.write(key, undefined);
+    const n = Math.round(parseFloat(text.replace(',', '.')));
+    if (isFinite(n) && n >= 80) this.write(key, n);
   }
 
   /**
@@ -1028,7 +1036,53 @@ export class SemaphoreStudio extends LitElement {
             </button>`,
           )}
         </div>
-        <div class="chips" style="margin-top:8px">
+        <h2 style="margin-top:14px">Format dans Home Assistant</h2>
+        <div class="row">
+          <label>Hauteur (px)</label>
+          <input
+            type="number"
+            step="10"
+            min="80"
+            placeholder="auto"
+            .value=${this.config.height === undefined ? '' : String(this.config.height)}
+            @change=${(e: Event) => this.setSize('height', (e.target as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="row">
+          <label>Proportion</label>
+          <input
+            type="text"
+            placeholder="16/10"
+            .value=${String(this.config['aspect-ratio'] ?? '')}
+            @change=${(e: Event) =>
+              this.write('aspect-ratio', (e.target as HTMLInputElement).value.trim() || undefined)}
+          />
+        </div>
+        <div class="row">
+          <label>Hauteur maximale (px)</label>
+          <input
+            type="number"
+            step="10"
+            min="80"
+            placeholder="74 % de l’écran"
+            .value=${this.config['max-height'] === undefined ? '' : String(this.config['max-height'])}
+            @change=${(e: Event) => this.setSize('max-height', (e.target as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="chips">
+          <button
+            aria-pressed=${this.config['show-timeline'] !== false}
+            title="La bande d’événements sous la scène."
+            @click=${() => this.toggleFlag('show-timeline')}
+          >Timeline</button>
+        </div>
+        <p class="note">
+          La hauteur l’emporte sur la proportion. Dans une vue « sections », c’est
+          la grille de Home Assistant qui décide : la carte remplit sa cellule et
+          se redimensionne à la poignée.
+        </p>
+
+        <div class="chips" style="margin-top:14px">
           <button @click=${this.rememberView}>Mémoriser cette vue</button>
           <button ?disabled=${!this.config.view} @click=${this.forgetView}>Oublier</button>
         </div>

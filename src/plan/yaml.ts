@@ -151,6 +151,10 @@ function planBody(
     // default back at you is one nobody reads twice.
     'show-grid': config['show-grid'] === false ? false : undefined,
     'show-labels': config['show-labels'] === false ? false : undefined,
+    'show-timeline': config['show-timeline'] === false ? false : undefined,
+    height: config.height,
+    'max-height': config['max-height'],
+    'aspect-ratio': config['aspect-ratio'],
     'floor-opacity':
       config['floor-opacity'] !== undefined && Math.abs(config['floor-opacity'] - 0.1) > 1e-6
         ? round(config['floor-opacity'], 2)

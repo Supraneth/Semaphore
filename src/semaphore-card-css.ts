@@ -23,6 +23,8 @@ const ease = unsafeCSS(MOTION.ease);
 export const styles = css`
   :host {
     display: block;
+    /* Auto in a masonry column, the cell's height in a sections grid. */
+    height: 100%;
     --semaphore-ink: ${ink};
     --semaphore-parchment: ${parchment};
     --semaphore-radius: var(--ha-card-border-radius, 12px);
@@ -31,15 +33,17 @@ export const styles = css`
   ha-card {
     overflow: hidden;
     padding: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
   }
 
+  /* Height and shape are set inline by stageStyle(): a dashboard row count, an
+     explicit height, or the card's own aspect ratio, in that order. */
   .stage {
     position: relative;
     width: 100%;
-    /* Tall enough to hold a floor plan at a useful scale, capped so the card
-       never eats a phone screen whole. */
-    aspect-ratio: 16 / 10;
-    max-height: 74vh;
+    min-height: 120px;
     background: var(--semaphore-ink);
   }
 
@@ -278,43 +282,138 @@ export const styles = css`
     position: relative;
     padding: 8px 12px 10px;
     background: var(--ha-card-background, var(--card-background-color, transparent));
-    cursor: ew-resize;
-    touch-action: none;
+    /* The label column, shared by the axis and every track, so two cameras
+       firing at the same minute line up vertically. */
+    --label-w: 76px;
+    font-size: 11px;
   }
 
-  .timeline .lanes {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+  .timeline .axis,
+  .timeline .track {
+    display: grid;
+    grid-template-columns: var(--label-w) 1fr;
+    align-items: center;
+    gap: 8px;
   }
 
-  .timeline .lane {
-    position: relative;
-    height: 7px;
-    border-radius: 3px;
-    background: rgba(91, 114, 133, 0.22);
+  .timeline .track {
+    margin-top: 3px;
+  }
+
+  .timeline .track-label {
+    color: var(--secondary-text-color, ${slate});
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .timeline .tracks {
+    position: relative;
+    height: 15px;
+  }
+
+  .timeline .tick {
+    position: absolute;
+    top: 2px;
+    transform: translateX(-50%);
+    color: var(--secondary-text-color, ${slate});
+    opacity: 0.75;
+    white-space: nowrap;
+  }
+  .timeline .tick.now {
+    transform: translateX(-100%);
+    opacity: 1;
+  }
+
+  /* The empty track, so a camera with nothing to report still reads as a
+     camera rather than as a gap in the list. */
+  .timeline .rail {
+    position: absolute;
+    top: 4px;
+    height: 7px;
+    left: 0;
+    right: 0;
+    border-radius: 4px;
+    background: rgba(91, 114, 133, 0.22);
   }
 
   .timeline .mark {
     position: absolute;
-    top: 0;
-    bottom: 0;
-    min-width: 2px;
+    top: 2px;
+    height: 11px;
+    min-width: 3px;
+    padding: 0;
+    border: none;
     border-radius: 3px;
     cursor: pointer;
+    transition: transform ${tap} ${ease};
+  }
+  .timeline .mark:hover,
+  .timeline .mark.on {
+    transform: scaleY(1.3);
+    box-shadow: 0 0 0 1px var(--card-background-color, ${ink});
+  }
+  .timeline .mark:focus-visible {
+    outline: 2px solid ${white};
+    outline-offset: 1px;
   }
 
-  .timeline .cursor {
+  .timeline .scrub {
     position: absolute;
-    top: -2px;
-    bottom: -2px;
-    width: 2px;
-    margin-left: -1px;
+    top: 8px;
+    bottom: 30px;
+    width: 1px;
     background: ${white};
-    box-shadow: 0 0 6px ${red};
     pointer-events: none;
+  }
+  .timeline .scrub .time {
+    position: absolute;
+    top: -4px;
+    left: 4px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: ${ink};
+    color: ${parchment};
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .timeline .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 8px 0 0;
+    padding-left: calc(var(--label-w) + 8px);
+    color: var(--secondary-text-color, ${slate});
+  }
+  .timeline .legend.quiet {
+    display: block;
+    padding-left: 0;
+    text-align: center;
+  }
+  .timeline .key {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .timeline .key i,
+  .panel .event i {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+
+  .panel .event {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px 8px;
+    font-size: 12px;
+    color: ${slate};
+  }
+  .panel .event strong {
+    color: var(--semaphore-parchment);
   }
 
   /* ---- states ---------------------------------------------------------- */

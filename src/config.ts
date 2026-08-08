@@ -92,6 +92,26 @@ function colour(value: unknown, where: string): string {
   return value;
 }
 
+/**
+ * An aspect ratio, as CSS would take it: `16/10`, `4 / 3`, or a bare `1.6`.
+ *
+ * Validated rather than passed through, because it lands in a style attribute:
+ * a malformed value there is not an error, it is a card that silently loses its
+ * height and collapses to nothing.
+ */
+function ratio(value: unknown, where: string): string {
+  if (typeof value === 'number' && isFinite(value) && value > 0) return String(value);
+  if (typeof value === 'string') {
+    const m = value.trim().match(/^(\d+(?:\.\d+)?)\s*[/:]\s*(\d+(?:\.\d+)?)$/);
+    if (m && +m[1] > 0 && +m[2] > 0) return `${m[1]} / ${m[2]}`;
+    const single = Number(value);
+    if (isFinite(single) && single > 0) return String(single);
+  }
+  return fail(
+    `${where} : attendu un rapport comme \`16/10\` ou un nombre, reçu ${describe(value)}.`,
+  );
+}
+
 let seq = 0;
 const uid = (prefix: string): string => `${prefix}-${++seq}`;
 
@@ -408,6 +428,16 @@ export function validateConfig(input: SemaphoreConfig): ValidationResult {
       'show-grid': bool(raw['show-grid'], true, '`show-grid`'),
       'show-labels': bool(raw['show-labels'], true, '`show-labels`'),
       'floor-opacity': num(raw['floor-opacity'], 0.1, '`floor-opacity`', 0),
+      'show-timeline': bool(raw['show-timeline'], true, '`show-timeline`'),
+      height: raw.height === undefined ? undefined : num(raw.height, 0, '`height`', 80),
+      'max-height':
+        raw['max-height'] === undefined
+          ? undefined
+          : num(raw['max-height'], 0, '`max-height`', 80),
+      'aspect-ratio':
+        raw['aspect-ratio'] === undefined
+          ? undefined
+          : ratio(raw['aspect-ratio'], '`aspect-ratio`'),
       levels,
       cameras,
     },

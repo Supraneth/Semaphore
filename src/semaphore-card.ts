@@ -6,7 +6,7 @@ import type { CameraConfig, CameraState, Detection, SemaphoreConfig } from './ty
 import { validateConfig } from './config';
 import { Scene } from './plan/scene';
 import { FrigateBridge } from './frigate';
-import { STATE_STYLES } from './theme';
+import { STATE_STYLES, labelCss } from './theme';
 import { styles } from './semaphore-card-css';
 import { DEFAULT_VIEW, VIEW_PRESETS, presetOf, type ViewPreset } from './plan/view';
 
@@ -39,7 +39,18 @@ export class SemaphoreCard extends LitElement {
    */
   @state() private preset: ViewPreset | undefined = DEFAULT_VIEW;
   @state() private events: Detection[] = [];
+  /** Time under the pointer on the timeline, in ms. */
   @state() private cursor: number | null = null;
+  /** The event whose details the focus panel is showing. */
+  @state() private selected: Detection | null = null;
+  /**
+   * The right edge of the timeline, refreshed on the tick.
+   *
+   * Read once per render rather than from `Date.now()` at each of the dozen
+   * places that need it, or the marks, the axis and the cursor each land on a
+   * slightly different "now" and the whole thing shears.
+   */
+  private now = Date.now();
   @state() private ready = false;
   @state() private error = '';
 
@@ -71,6 +82,50 @@ export class SemaphoreCard extends LitElement {
 
   getCardSize(): number {
     return 10;
+  }
+
+  /**
+   * Sizing in the sections dashboard.
+   *
+   * Home Assistant sizes a card in a sections view from these, and writes the
+   * user's drag back into the card's own config as `grid_options`. Declaring
+   * them is what puts the resize handles on the card at all — without them a
+   * scene is stuck at whatever width and height it decided for itself.
+   */
+  getGridOptions(): Record<string, unknown> {
+    return {
+      columns: 'full',
+      rows: 8,
+      min_columns: 6,
+      min_rows: 4,
+    };
+  }
+
+  /** The name this had before Home Assistant 2024.11. Same answer. */
+  getLayoutOptions(): Record<string, unknown> {
+    return this.getGridOptions();
+  }
+
+  /**
+   * The scene's box.
+   *
+   * Three cases, in order. A dashboard that has given the card a row count owns
+   * the height and the scene simply fills it — imposing an aspect ratio there
+   * would leave a gap or overflow. An explicit `height` wins next. Otherwise the
+   * card keeps its own shape and its own cap, so it never eats a phone screen.
+   */
+  private stageStyle(): string {
+    const rows = (this.config as Record<string, any>).grid_options?.rows;
+    // `flex` rather than `height:100%`: the card is a flex column, and the
+    // timeline below has to keep its own height out of the share. The floor
+    // matters — a dashboard that promises a row count and then gives the card
+    // no definite height would otherwise collapse the scene to nothing.
+    if (typeof rows === 'number') return 'flex:1 1 auto;min-height:200px;max-height:none';
+
+    const cap = this.config['max-height'];
+    const max = cap ? `${cap}px` : '74vh';
+    if (this.config.height) return `height:${this.config.height}px;max-height:${max}`;
+    return `aspect-ratio:${this.config['aspect-ratio'] ?? '16 / 10'};max-height:${max}`;
   }
 
   static getStubConfig(): Partial<SemaphoreConfig> {
@@ -167,6 +222,7 @@ export class SemaphoreCard extends LitElement {
   private update_(): void {
     if (!this.scene || !this.bridge) return;
     const now = Date.now();
+    this.now = now;
     this.bridge.prune(now);
 
     const decay = (this.config['decay-seconds'] ?? 12) * 1000;
@@ -240,6 +296,7 @@ export class SemaphoreCard extends LitElement {
 
   private unfocus(): void {
     this.focused = null;
+    this.selected = null;
     this.scene?.focus(null);
   }
 
@@ -259,17 +316,26 @@ export class SemaphoreCard extends LitElement {
     this.requestUpdate();
   }
 
-  private scrub(ev: PointerEvent): void {
-    const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-    const span = (this.config['timeline-hours'] ?? 24) * 3600_000;
-    this.cursor = Date.now() - span * (1 - ratio);
-    if (this.scene) this.scene.frozenTime = ratio * 60;
+  private get span(): number {
+    return (this.config['timeline-hours'] ?? 24) * 3600_000;
   }
 
-  private endScrub(): void {
+  /** Follows the pointer across the tracks and reads the time under it. */
+  private hover(ev: PointerEvent): void {
+    const track = (ev.currentTarget as HTMLElement).querySelector('.tracks');
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+    this.cursor = this.now - this.span * (1 - ratio);
+  }
+
+  private endHover(): void {
     this.cursor = null;
-    if (this.scene) this.scene.frozenTime = null;
+  }
+
+  private selectEvent(det: Detection): void {
+    this.selected = det;
+    this.focusCamera(det.camera);
   }
 
   // ---- render -------------------------------------------------------------
@@ -279,7 +345,7 @@ export class SemaphoreCard extends LitElement {
     return html`
       <ha-card>
         ${this.migrated ? this.renderMigrationNotice() : nothing}
-        <div class="stage">
+        <div class="stage" style=${this.stageStyle()}>
           <canvas class="canvas"></canvas>
           <div class="overlay">
             ${this.renderRail()} ${this.renderStatus()} ${this.renderChips()}
@@ -393,10 +459,34 @@ export class SemaphoreCard extends LitElement {
           <span>${cam.fov}° · ${cam.range} m</span>
           <span>Cap ${Math.round(cam.azimuth)}°</span>
         </div>
+        ${this.selected && this.selected.camera === cam.name
+          ? html`<div class="event">
+              <i style="background:${labelCss(this.selected.label)}"></i>
+              <strong>${this.selected.label}</strong>
+              <span>${clockLabel(this.selected.startTime)}</span>
+              <span>${durationLabel(this.selected)}</span>
+              ${this.selected.score
+                ? html`<span>${Math.round(this.selected.score * 100)} %</span>`
+                : nothing}
+            </div>`
+          : nothing}
       </div>
     `;
   }
 
+  /**
+   * The timeline.
+   *
+   * The previous one drew a lane per camera, unlabelled, and a cursor that
+   * highlighted nothing — no time under it, no way to tell which of the marks
+   * you were looking at, and a scrub that quietly froze the sweep animation and
+   * did nothing else. It answered none of the three questions anyone asks of a
+   * timeline: what happened, when, and on which camera.
+   *
+   * So: named tracks, hour marks along the top, a mark per event coloured by
+   * what was seen, a cursor that reads out its own time, and a click that opens
+   * the event. `show-timeline: false` removes it entirely.
+   */
   private renderTimeline(): TemplateResult | typeof nothing {
     if (!this.ready) return html`<div class="empty">Chargement de la scène…</div>`;
     if (!this.config.cameras.length) {
@@ -405,46 +495,116 @@ export class SemaphoreCard extends LitElement {
         ici ce qu'il exporte.
       </div>`;
     }
+    if (this.config['show-timeline'] === false) return nothing;
 
-    const span = (this.config['timeline-hours'] ?? 24) * 3600_000;
-    const now = Date.now();
+    const span = this.span;
+    const now = this.now;
+    const from = now - span;
+    const place = (t: number): number => ((t - from) / span) * 100;
+
     return html`
       <div
         class="timeline"
-        @pointerdown=${this.scrub}
-        @pointermove=${(e: PointerEvent) => e.buttons && this.scrub(e)}
-        @pointerup=${this.endScrub}
-        @pointerleave=${this.endScrub}
+        @pointermove=${this.hover}
+        @pointerleave=${this.endHover}
       >
-        <div class="lanes">
-          ${this.config.cameras.map((cam) => {
-            const marks = this.events.filter((e) => e.camera === cam.name);
-            return html`
-              <div class="lane" title=${cam.label ?? cam.name}>
-                ${marks.map((m) => {
-                  const start = ((m.startTime - (now - span)) / span) * 100;
-                  const end = (((m.endTime ?? now) - (now - span)) / span) * 100;
-                  if (end < 0 || start > 100) return nothing;
-                  return html`<span
-                    class="mark"
-                    style="left:${Math.max(0, start)}%;width:${Math.max(
-                      0.4,
-                      Math.min(100, end) - Math.max(0, start),
-                    )}%;background:${STATE_STYLES.alert.css}"
-                    title=${m.label}
-                    @click=${() => this.focusCamera(cam.name)}
-                  ></span>`;
-                })}
-              </div>
-            `;
+        <div class="axis">
+          <span class="track-label"></span>
+          <div class="tracks">
+            ${this.ticks().map(
+              (t) => html`<span class="tick" style="left:${place(t)}%">${hourLabel(t)}</span>`,
+            )}
+            <span class="tick now" style="left:100%">maintenant</span>
+          </div>
+        </div>
+
+        ${this.config.cameras.map((cam) => this.renderTrack(cam, place))}
+
+        ${this.cursor !== null
+          ? html`<div
+              class="scrub"
+              style="left:calc(var(--label-w) + (100% - var(--label-w) - 24px) * ${place(this.cursor) / 100})"
+            >
+              <span class="time">${clockLabel(this.cursor)}</span>
+            </div>`
+          : nothing}
+
+        ${this.renderLegend()}
+      </div>
+    `;
+  }
+
+  private renderTrack(cam: CameraConfig, place: (t: number) => number): TemplateResult {
+    const marks = this.events.filter((e) => e.camera === cam.name);
+    return html`
+      <div class="track">
+        <span class="track-label" title=${cam.label ?? cam.name}>${cam.label ?? cam.name}</span>
+        <div class="tracks">
+          <div class="rail"></div>
+          ${marks.map((m) => {
+            const start = place(m.startTime);
+            const end = place(m.endTime ?? this.now);
+            if (end < 0 || start > 100) return nothing;
+            const left = Math.max(0, start);
+            return html`<button
+              class="mark ${this.selected?.id === m.id ? 'on' : ''}"
+              style="left:${left}%;width:${Math.max(0.5, Math.min(100, end) - left)}%;background:${labelCss(m.label)}"
+              title="${m.label} · ${clockLabel(m.startTime)} · ${durationLabel(m)}"
+              @click=${() => this.selectEvent(m)}
+            ></button>`;
           })}
-          ${this.cursor
-            ? html`<div class="cursor" style="left:${((this.cursor - (now - span)) / span) * 100}%"></div>`
-            : nothing}
         </div>
       </div>
     `;
   }
+
+  /** What is in the window, and what it was. Empty is worth saying out loud. */
+  private renderLegend(): TemplateResult {
+    if (!this.events.length) {
+      return html`<p class="legend quiet">
+        Aucun événement sur les ${this.config['timeline-hours'] ?? 24} dernières heures.
+      </p>`;
+    }
+    const counts = new Map<string, number>();
+    for (const e of this.events) counts.set(e.label, (counts.get(e.label) ?? 0) + 1);
+    return html`
+      <p class="legend">
+        ${[...counts].map(
+          ([label, n]) => html`<span class="key">
+            <i style="background:${labelCss(label)}"></i>${label} × ${n}
+          </span>`,
+        )}
+      </p>
+    `;
+  }
+
+  /** Round hour marks, thinned so the labels never collide. */
+  private ticks(): number[] {
+    const hours = this.config['timeline-hours'] ?? 24;
+    const step = hours <= 3 ? 1 : hours <= 8 ? 2 : hours <= 16 ? 4 : 6;
+    const out: number[] = [];
+    const top = new Date(this.now);
+    top.setMinutes(0, 0, 0);
+    for (let t = top.getTime(); t > this.now - this.span; t -= step * 3600_000) {
+      // The last tick would sit under "maintenant" and read as a second label.
+      if (this.now - t > this.span * 0.06) out.push(t);
+    }
+    return out;
+  }
+}
+
+const two = (n: number): string => String(n).padStart(2, '0');
+const clockLabel = (t: number): string => {
+  const d = new Date(t);
+  return `${two(d.getHours())}:${two(d.getMinutes())}`;
+};
+const hourLabel = (t: number): string => `${two(new Date(t).getHours())} h`;
+
+function durationLabel(det: Detection): string {
+  const seconds = Math.max(1, Math.round(((det.endTime ?? Date.now()) - det.startTime) / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
 }
 
 (window as any).customCards = (window as any).customCards ?? [];

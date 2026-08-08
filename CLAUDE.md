@@ -25,6 +25,12 @@ Vérifié mécaniquement :
   trouvé à la main. Vérifié en pilotant de vrais événements souris et tactiles.
 - Les murs sont opaques : le dessus d'un mur mesure exactement `#EFE7D4`.
 - Une couleur par caméra teinte bien le secteur au repos.
+- **La timeline est vérifiée sur ce qu'elle affiche** : pistes nommées, axe des
+  heures, un repère par événement portant étiquette / heure / durée, largeur
+  minimale respectée pour un événement de 5 s, curseur à l'heure exacte, clic
+  ouvrant l'événement dans le panneau, fenêtre vide annoncée.
+- Le format tient : proportion par défaut et réglée, hauteur en pixels, plafond,
+  et une cellule de grille qui l'emporte sur tout le reste.
 - **L'éditeur autonome tourne**, piloté en Chromium headless via CDP : tracé
   d'une chaîne de murs, longueur au clavier, annuler/refaire, pose puis
   annulation d'une caméra, ajout et duplication de niveau (identifiants tous
@@ -203,7 +209,22 @@ c'est probablement le changement qui a tort.
     voudrait dire « caméra du salon » sur une caméra et « quelqu'un est là » sur
     une autre détruit la seule chose que la palette apportait.
 
-20. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
+20. **La timeline répond à quoi, quand, et sur quelle caméra — ou elle
+    disparaît.** Une bande de repères sans nom de piste, sans axe des heures et
+    avec un curseur qui n'affiche rien n'informe de rien : c'est ce qu'elle a
+    été et c'est pour ça qu'on l'a refaite. Les repères ont une largeur
+    minimale, sans quoi un événement de cinq secondes sur six heures — le cas
+    ordinaire — occuperait 0,02 % de la largeur. `show-timeline: false` la
+    retire.
+
+21. **La carte ne décide de sa taille qu'à défaut.** Une cellule de grille de
+    Home Assistant l'emporte sur `height`, qui l'emporte sur `aspect-ratio`.
+    `getGridOptions()` est ce qui fait apparaître les poignées de
+    redimensionnement ; sans lui la carte est figée. Et le cas « le tableau de
+    bord annonce des rangées puis ne donne aucune hauteur » a besoin d'un
+    plancher, sinon la scène tombe à zéro pixel.
+
+22. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
     est dessiné comme une seule silhouette — objectif, puis le pourtour de
     l'isovist dans l'ordre, fermé. Une seule passe : cent triangles translucides
     partageant des arêtes se composeraient en bandes. Ne pas fabriquer une

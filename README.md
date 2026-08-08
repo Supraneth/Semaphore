@@ -210,6 +210,44 @@ plus rasantes tirent vers l'encre.
 
 ---
 
+## La timeline
+
+Sous la scène, une bande d'événements qui répond aux trois questions qu'on pose
+à une timeline : **quoi**, **quand**, **sur quelle caméra**.
+
+- une piste par caméra, **avec son nom** ;
+- un axe des heures, terminé par « maintenant » ;
+- un repère par détection, **coloré par ce qui a été vu** — rouge pour une
+  personne, jaune pour un véhicule, vert pour le reste ;
+- un curseur qui suit le pointeur et **affiche l'heure qu'il désigne** ;
+- un clic sur un repère ouvre l'événement : étiquette, heure, durée, score, et
+  le flux de la caméra concernée ;
+- une fenêtre sans rien le dit en toutes lettres, au lieu de montrer des pistes
+  vides.
+
+Un événement de cinq secondes sur six heures fait 0,02 % de la largeur : les
+repères ont une largeur minimale, sinon les événements courts — c'est-à-dire la
+plupart — seraient invisibles.
+
+`show-timeline: false` la retire complètement.
+
+---
+
+## Le format de la carte
+
+| Réglage | Effet |
+|---|---|
+| `height: 420` | hauteur de la scène en pixels |
+| `aspect-ratio: "4/3"` | forme de la scène quand aucune hauteur n'est donnée. Défaut `16/10` |
+| `max-height: 500` | plafond en pixels. Défaut : 74 % de la hauteur de l'écran |
+
+Dans un tableau de bord en **sections**, rien de tout cela n'est nécessaire :
+la carte déclare ses dimensions à Home Assistant, apparaît avec des poignées de
+redimensionnement, et remplit la cellule qu'on lui donne. La hauteur l'emporte
+sur la proportion, et une cellule de grille l'emporte sur les deux.
+
+---
+
 ## Personnalisation
 
 Tout se règle dans l'éditeur et voyage dans le YAML.
@@ -266,7 +304,11 @@ type: custom:semaphore-card
 grid: 0.5                  # pas de la grille, en mètres
 show-grid: true            # dessiner le quadrillage au sol
 show-labels: true          # noms et surfaces des pièces
+show-timeline: true        # bande d'événements sous la scène
 floor-opacity: 0.1         # densité des dalles
+height: 420                # hauteur de la scène en pixels
+aspect-ratio: 16/10        # forme, si aucune hauteur n'est donnée
+max-height: 500            # plafond ; défaut 74 % de l'écran
 topic-prefix: frigate
 timeline-hours: 24
 decay-seconds: 12
@@ -403,6 +445,8 @@ un vrai Home Assistant.
 | Carte dépouillée | plus de bouton d'édition, plus d'interface d'éditeur dans le DOM |
 | Murs opaques | le dessus d'un mur mesure exactement `#EFE7D4` au pixel, pas une version délavée |
 | Couleur par caméra | teinter toutes les caméras en vert puis en rouge inverse bien l'écart vert-rouge moyen du canvas |
+| Timeline | pistes nommées, axe des heures, un repère par événement portant étiquette, heure et durée, largeur minimale respectée, curseur à l'heure exacte, clic ouvrant l'événement, fenêtre vide annoncée |
+| Format de la carte | proportion par défaut, proportion réglée, hauteur en pixels, plafond respecté, cellule de grille prioritaire, dimensions déclarées à Home Assistant |
 | MQTT → box → homographie → traînée | piste synthétique conforme |
 | 45 contrôles numériques | ouvertures et ligne de vue, `project`/`unproject` exactement inverses, hiérarchie d'accrochage, migration en mètres, YAML relu par `js-yaml` |
 

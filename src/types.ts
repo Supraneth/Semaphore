@@ -154,6 +154,14 @@ export interface SemaphoreConfig {
   'show-labels'?: boolean;
   /** Opacity of the floor slabs, 0 to 1. Default 0.1. */
   'floor-opacity'?: number;
+  /** Height of the scene in pixels. Overrides `aspect-ratio` when set. */
+  height?: number;
+  /** Shape of the scene when no height is given. `"16/10"`, `"4/3"`, `1.6`. */
+  'aspect-ratio'?: string | number;
+  /** Cap on the scene's height in pixels. Default: 74 % of the viewport. */
+  'max-height'?: number;
+  /** Show the detection timeline under the scene. Default true. */
+  'show-timeline'?: boolean;
   view?: ViewConfig;
   'topic-prefix'?: string;
   'instance-id'?: string;
