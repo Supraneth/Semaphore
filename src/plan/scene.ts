@@ -187,23 +187,56 @@ export class Scene {
    */
   private userFramed = false;
 
-  /** Frames everything the scene contains. */
+  /**
+   * Frames what the scene will actually paint.
+   *
+   * Not what the document contains: stacked, only the active storey is drawn
+   * (see `Renderer.render`), so fitting against every level sizes the view
+   * around walls nobody can see. And the mass does not start at the ground —
+   * a storey carries its own `elevation`, so the height range handed to `fit`
+   * runs from the lowest floor drawn to the top of the walls standing on it.
+   *
+   * Deliberately not up to the lenses. A camera on a 3.2 m mast over a 2.5 m
+   * storey would drag the framed mass above the building and push the building
+   * itself down and off the bottom edge — to keep a dashed line and a chip in
+   * view, when the chip is clamped onto the stage anyway. The building is the
+   * subject; the mast is an annotation on it.
+   */
   frame(): void {
     if (!this.view.width || !this.view.height) return;
     this.framed = true;
     this.userFramed = false;
+
+    const shown = this.config.levels
+      .map((level, index) => ({ level, index }))
+      .filter(({ level }) => this.explode > 0 || level.id === this.activeLevel);
+    // An active level that no longer exists must not frame against nothing.
+    const drawn = shown.length
+      ? shown
+      : this.config.levels.map((level, index) => ({ level, index }));
+
+    const ids = new Set(drawn.map(({ level }) => level.id));
+    const fallback = this.config.levels[0]?.id;
+    const cameras = this.config.cameras.filter((c) => ids.has(c.level ?? fallback));
+
+    let low = Infinity;
+    let high = -Infinity;
+    for (const { level, index } of drawn) {
+      const base = level.elevation + this.explode * index;
+      low = Math.min(low, base);
+      high = Math.max(high, base + (level.wallHeight ?? 2.5));
+    }
+    if (!Number.isFinite(low)) {
+      low = 0;
+      high = 0;
+    }
+
     const points = allPoints(
-      this.config.levels,
-      this.config.cameras.map((c) => c.position),
+      drawn.map(({ level }) => level),
+      cameras.map((c) => c.position),
     );
-    const tallest = Math.max(
-      0,
-      ...this.config.levels.map(
-        (l, i) => l.elevation + this.explode * i + (l.wallHeight ?? 2.5),
-      ),
-    );
-    if (points.length) this.view.fit(points, 1.5, tallest);
-    else this.view.fit([[-6, -6], [6, 6]], 2, tallest);
+    if (points.length) this.view.fit(points, 1.5, low, high);
+    else this.view.fit([[-6, -6], [6, 6]], 2, low, high);
     this.invalidate();
   }
 
@@ -279,6 +312,13 @@ export class Scene {
   setActiveLevel(id: string): void {
     if (this.activeLevel === id) return;
     this.activeLevel = id;
+    // Stacked, changing storey changes the whole of what is painted — and it
+    // moves vertically by the difference between the two elevations, which is
+    // a metre in most houses and can be five. Framing is per-storey now, so
+    // without this the storey you just asked for is drawn wherever the last
+    // one happened to be framed, low or off the canvas entirely. A view the
+    // user placed by hand is still theirs.
+    if (!this.explode && !this.userFramed) this.frame();
     this.noteInteraction();
   }
 

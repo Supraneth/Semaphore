@@ -451,6 +451,7 @@ un vrai Home Assistant.
 | Lecture 2.5D | volume de couverture et mât peints à 45°, absents à plat ; les trois préréglages changent bien inclinaison et lacet |
 | Navigation dans la carte | glisser fait pivoter, la molette et le pincement zooment, le pincement ne fait pas tourner, plus aucun préréglage ne s'attribue un angle trouvé à la main |
 | Recadrage au redimensionnement | une carte qui change de largeur se recadre ; une vue placée à la main survit au redimensionnement ; **Cadrer** rend la main au recadrage automatique |
+| Centrage du cadrage | boîte projetée du bâtiment comparée au centre du canvas : ≤ 0,5 px d'écart en Plan, 2.5D et Relief, marges symétriques, y compris avec un niveau à `elevation: 5`, au changement de niveau et en mode séparé |
 | Retour de focus | ouvrir une caméra puis fermer le panneau redonne exactement la vue d'ensemble d'avant |
 | Chrome adaptatif | à 360 px de carte : vignettes retirées, colonne d'étiquettes réduite, scène en 4/3, panneau en feuille pleine largeur plafonnée |
 | Carte dépouillée | plus de bouton d'édition, plus d'interface d'éditeur dans le DOM |

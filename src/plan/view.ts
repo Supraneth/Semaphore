@@ -153,14 +153,21 @@ export class View {
   }
 
   /**
-   * Frames a set of world points.
+   * Frames a set of world points spanning `zMin` to `zMax` in height.
    *
-   * `maxHeight` matters as much as the footprint: a wall, and especially a
+   * The height range matters as much as the footprint: a wall, and especially a
    * separated upper storey, is painted above its own floor, so the screen
-   * height a scene needs is `depth·cos(pitch) + height·sin(pitch)`. Fitting to
+   * height a scene needs is `depth·cos(pitch) + rise·sin(pitch)`. Fitting to
    * the footprint alone puts the top of the building off the canvas.
+   *
+   * It is a *range* and not a single height because the mass does not have to
+   * start at the ground. A storey with `elevation: 5` is painted five metres
+   * up, and treating that as a building 7.5 m tall standing on the floor gets
+   * both halves wrong: the scene is scaled for more rise than it has, and it is
+   * re-centred by half of the wrong number, which leaves it high in the canvas
+   * — far enough, at a steep pitch, to clip off the top edge.
    */
-  fit(points: Point[], margin = 1.5, maxHeight = 0): void {
+  fit(points: Point[], margin = 1.5, zMin = 0, zMax = 0): void {
     if (!points.length || !this.width || !this.height) return;
     let minX = Infinity;
     let maxX = -Infinity;
@@ -173,20 +180,30 @@ export class View {
       maxY = Math.max(maxY, y);
     }
     this.center = [(minX + maxX) / 2, (minY + maxY) / 2];
-    const w = maxX - minX + margin * 2;
-    const h = maxY - minY + margin * 2;
-    // A depth of `h` metres occupies `h · cos(pitch) · zoom` pixels on screen,
-    // so the height budget gives `zoom ≤ height / (h · cos pitch)`. Multiplying
-    // by cos here instead of dividing is the same mistake twice over and shrank
-    // every scene by a factor of cos².
-    const screenDepth = Math.max(0.5, h) * this.cp + maxHeight * this.sp;
-    this.zoom = Math.min(this.width / Math.max(0.5, w), this.height / screenDepth);
+    const rise = Math.max(0, zMax - zMin);
+    // Half-extents of the footprint, margin included.
+    const a = Math.max(0.25, (maxX - minX) / 2 + margin);
+    const b = Math.max(0.25, (maxY - minY) / 2 + margin);
+
+    // The box has to be measured along the *screen* axes, not the world ones.
+    // `east` is `dx·cos(yaw) + dy·sin(yaw)`, so a rectangle turned 32° off axis
+    // is wider on screen than it is in the world — by up to 40 % at 45°.
+    // Fitting `maxX - minX` to the canvas width assumes yaw 0, which is true of
+    // exactly one of the three presets; the other two overflowed both edges.
+    const eastHalf = a * Math.abs(this.cy) + b * Math.abs(this.sy);
+    const northHalf = a * Math.abs(this.sy) + b * Math.abs(this.cy);
+    // A depth of `d` metres occupies `d · cos(pitch) · zoom` pixels, and a rise
+    // of `r` metres `r · sin(pitch) · zoom`. Multiplying by cos instead of
+    // dividing is the same mistake twice over and shrank every scene by cos².
+    const upHalf = northHalf * this.cp + (rise / 2) * this.sp;
+
+    this.zoom = Math.min(this.width / (2 * eastHalf), this.height / (2 * Math.max(0.25, upHalf)));
     this.refresh();
 
-    // Centre what is painted, not the footprint it stands on. The painted mass
-    // spans z = 0 to `maxHeight`, so its middle projects that far above the
+    // Centre what is painted, not the footprint it stands on. The mass sits
+    // between `zMin` and `zMax`, so its middle projects that far above the
     // canvas centre and the content has to come back down by the same amount.
-    this.panBy(0, (maxHeight / 2) * this.sp * this.zoom);
+    this.panBy(0, ((zMin + zMax) / 2) * this.sp * this.zoom);
   }
 
   snapshot(): { yaw: number; pitch: number; zoom: number; center: Point } {

@@ -32,6 +32,12 @@ Vérifié mécaniquement :
   1080 → 360 px change bien le zoom, une vue tournée à la main y survit.
 - **Sortir du focus redonne exactement la vue d'avant** — yaw, pitch, zoom et
   centre identiques.
+- **Le cadrage est mesuré, pas jugé à l'œil** : la boîte projetée de la
+  géométrie peinte est comparée au centre du canvas. Sur une config à
+  `elevation: 5` — deux niveaux, lacet 20° et 32° — le décentrage vertical passe
+  de −88 px (2.5D) et −123 px avec le toit coupé (Relief) à ≤ 0,5 px, marges
+  haut/bas et gauche/droite symétriques dans les trois préréglages, au changement
+  de niveau et en mode séparé. Aucune régression sur la maison d'exemple.
 - Les murs sont opaques : le dessus d'un mur mesure exactement `#EFE7D4`.
 - Une couleur par caméra teinte bien le secteur au repos.
 - **La timeline est vérifiée sur ce qu'elle affiche** : pistes nommées, axe des
@@ -182,7 +188,26 @@ c'est probablement le changement qui a tort.
     nommant l'entrée et le champ fautifs. Une `TypeError` au-dessus d'une carte
     vide n'apprend rien à personne.
 
-15. **Tout changement de pitch, d'éclatement ou de taille recadre.** Aplatir une
+15. **Le cadrage porte sur ce qui est peint, et se mesure sur les axes de
+    l'écran.** Deux erreurs distinctes vivaient dans `View.fit` et n'étaient
+    invisibles qu'à lacet 0 et élévation 0 :
+    - La masse peinte **ne part pas de z = 0**. Empilé, seul le niveau actif est
+      dessiné, et un niveau porte son `elevation` : un RDC à 5 m est peint entre
+      5 et 7,5 m. Cadrer comme un bâtiment de 7,5 m posé au sol recentre de la
+      moitié du mauvais nombre — 88 px trop haut à 45°, 123 px et un toit coupé
+      à 62°. D'où `fit(points, margin, zMin, zMax)` et le calcul de la plage
+      dans `Scene.frame`. Les caméras n'y entrent **pas** : un mât de 3,2 m sur
+      un niveau de 2,5 m tirerait la masse au-dessus du bâtiment et pousserait
+      le bâtiment hors du bas.
+    - L'encombrement écran **dépend du lacet**. `east` vaut
+      `dx·cos(lacet) + dy·sin(lacet)` : une maison tournée de 32° est plus large
+      à l'écran que dans le monde, jusqu'à 40 % à 45°. Ajuster `maxX - minX` à
+      la largeur du canvas suppose un lacet nul — vrai d'exactement un des trois
+      préréglages, et les deux autres débordaient des deux bords.
+    Corollaire : **changer de niveau recadre** quand les niveaux sont empilés,
+    sinon l'étage demandé est dessiné là où le précédent avait été cadré.
+
+16. **Tout changement de pitch, d'éclatement ou de taille recadre.** Aplatir une
     vue à 45° rend la scène 40 % plus haute à l'écran ; séparer les étages y
     ajoute plusieurs mètres. Sans recadrage, le bâtiment quitte le canvas.
     Corollaire : **le premier cadrage a lieu à la première mesure non nulle du
@@ -198,7 +223,7 @@ c'est probablement le changement qui a tort.
     demande **Cadrer**, qui est précisément la demande de la reprendre. Voir
     `Scene.userFramed`.
 
-16. **Le lacet fait partie de la lecture, pas seulement l'inclinaison.** À lacet
+17. **Le lacet fait partie de la lecture, pas seulement l'inclinaison.** À lacet
     0 on regarde dans l'axe +y : tous les murs est-ouest sont vus de profil et
     une maison rectangulaire inclinée s'aplatit en élévation — la hauteur est
     dessinée et invisible. D'où `VIEW_PRESETS` (Plan 0°/0°, 2.5D 45°/20°,
@@ -207,13 +232,13 @@ c'est probablement le changement qui a tort.
     Le plan, lui, doit rester dans l'axe, sans quoi la grille cesse d'être une
     règle.
 
-17. **La maçonnerie est opaque ; l'alpha ne représente jamais la matière.** Une
+18. **La maçonnerie est opaque ; l'alpha ne représente jamais la matière.** Une
     face de mur translucide laisse voir le sol et la couverture au travers et la
     maison se lit comme une pile de boîtes en verre. L'ombrage passe donc par
     `mix()` vers l'encre, pas par `withAlpha`. L'alpha ne sert qu'à estomper un
     étage qui n'est pas l'étage actif.
 
-18. **La carte se manipule sans mode.** Glisser pivote, molette et pincement
+19. **La carte se manipule sans mode.** Glisser pivote, molette et pincement
     zooment. `ViewControls` est attaché par `Scene` tant que rien n'édite.
     Un tableau de bord se lit sur un téléphone : toute interaction réservée au
     clic droit n'existe pas. Et dès que l'utilisateur tourne à la main, plus
@@ -226,12 +251,12 @@ c'est probablement le changement qui a tort.
     téléphone fait plus souvent que lire la carte. L'inclinaison au doigt passe
     par les trois préréglages, qui sont là pour ça.
 
-19. **Une couleur personnalisée ne remplace que l'état de repos.** Les quatre
+20. **Une couleur personnalisée ne remplace que l'état de repos.** Les quatre
     autres états gardent la palette : ce sont eux la légende. Un rouge qui
     voudrait dire « caméra du salon » sur une caméra et « quelqu'un est là » sur
     une autre détruit la seule chose que la palette apportait.
 
-20. **La timeline répond à quoi, quand, et sur quelle caméra — ou elle
+21. **La timeline répond à quoi, quand, et sur quelle caméra — ou elle
     disparaît.** Une bande de repères sans nom de piste, sans axe des heures et
     avec un curseur qui n'affiche rien n'informe de rien : c'est ce qu'elle a
     été et c'est pour ça qu'on l'a refaite. Les repères ont une largeur
@@ -239,7 +264,7 @@ c'est probablement le changement qui a tort.
     ordinaire — occuperait 0,02 % de la largeur. `show-timeline: false` la
     retire.
 
-21. **La carte ne décide de sa taille qu'à défaut.** Une cellule de grille de
+22. **La carte ne décide de sa taille qu'à défaut.** Une cellule de grille de
     Home Assistant l'emporte sur `height`, qui l'emporte sur `aspect-ratio`,
     qui l'emporte sur la proportion choisie par la feuille de style.
     `getGridOptions()` est ce qui fait apparaître les poignées de
@@ -257,7 +282,7 @@ c'est probablement le changement qui a tort.
     conteneur, donc la forme par défaut (16/10, et 4/3 sous 460 px) vit dans la
     feuille de style, via `.stage.auto-aspect`.
 
-22. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
+24. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
     est dessiné comme une seule silhouette — objectif, puis le pourtour de
     l'isovist dans l'ordre, fermé. Une seule passe : cent triangles translucides
     partageant des arêtes se composeraient en bandes. Ne pas fabriquer une
