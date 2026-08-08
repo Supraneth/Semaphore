@@ -1,5 +1,5 @@
 import { css, unsafeCSS } from 'lit';
-import { CHART, MOTION } from './theme';
+import { CHART, MOTION, withAlpha } from './theme';
 
 /**
  * Card chrome.
@@ -9,6 +9,11 @@ import { CHART, MOTION } from './theme';
  * every other card on the dashboard. The scene itself keeps the chart palette
  * regardless of theme, because those colours are the legend: a white sector has
  * to mean "clear" whether the user runs a light or a dark dashboard.
+ *
+ * Everything responsive here answers to `@container`, never to `@media`. A card
+ * is 1100 px wide in a panel view and 320 px in the second masonry column of the
+ * same phone-sized window; the viewport cannot tell those apart and the stage
+ * itself can.
  */
 
 const ink = unsafeCSS(CHART.ink);
@@ -20,6 +25,12 @@ const tap = unsafeCSS(`${MOTION.tap}ms`);
 const panel = unsafeCSS(`${MOTION.panel}ms`);
 const ease = unsafeCSS(MOTION.ease);
 
+/** Glass over the scene. One recipe, so every floating control is one family. */
+const glassBg = unsafeCSS(withAlpha(CHART.ink, 0.72));
+const glassBgSolid = unsafeCSS(withAlpha(CHART.ink, 0.9));
+const glassEdge = unsafeCSS(withAlpha(CHART.parchment, 0.16));
+const glassEdgeLit = unsafeCSS(withAlpha(CHART.parchment, 0.28));
+
 export const styles = css`
   :host {
     display: block;
@@ -28,6 +39,8 @@ export const styles = css`
     --semaphore-ink: ${ink};
     --semaphore-parchment: ${parchment};
     --semaphore-radius: var(--ha-card-border-radius, 12px);
+    /* One inset for every floating control, so the four corners agree. */
+    --semaphore-inset: 10px;
   }
 
   ha-card {
@@ -36,6 +49,11 @@ export const styles = css`
     height: 100%;
     display: flex;
     flex-direction: column;
+    /* The unit everything below measures itself against. On the card rather
+       than on the stage because the stage is one of the things that has to
+       answer to it, and an element cannot query its own container. */
+    container-type: inline-size;
+    container-name: card;
   }
 
   /* Height and shape are set inline by stageStyle(): a dashboard row count, an
@@ -47,27 +65,72 @@ export const styles = css`
     background: var(--semaphore-ink);
   }
 
+  /* Shape, when the config did not name one. Wide cards read best long; a card
+     the width of a phone needs the height back, or the plan is a letterbox
+     between two rows of buttons. */
+  .stage.auto-aspect {
+    aspect-ratio: 16 / 10;
+  }
+
   .canvas {
     position: absolute;
     inset: 0;
     display: block;
     width: 100%;
     height: 100%;
-    /* The card owns every gesture over the scene: drag turns it, pinch zooms.
-       Leaving the browser its default touch behaviour here would scroll the
-       dashboard instead of the house. */
-    touch-action: none;
+    /* Sideways turns the house, downwards scrolls the dashboard. Taking every
+       touch — which "none" did — made the card a trap on a phone: a finger
+       that landed on it could not scroll the page past it. Two fingers still
+       pinch, and pan-y is what keeps the browser from zooming the whole
+       document when they do. */
+    touch-action: pan-y;
     cursor: grab;
+    z-index: 0;
   }
   .canvas:active {
     cursor: grabbing;
   }
 
+  /* The scene is a bright parchment plan on a dark ground, and the floating
+     chrome sits on whichever of the two it lands on. These two washes give the
+     controls something dark to sit against at the very top and bottom without
+     touching the middle of the plan. */
+  .stage::before,
+  .stage::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 76px;
+    pointer-events: none;
+    /* Between the canvas and the controls, explicitly: a generated box is the
+       first child of the stage and would otherwise paint under the canvas. */
+    z-index: 1;
+  }
+  .stage::before {
+    top: 0;
+    background: linear-gradient(${unsafeCSS(withAlpha(CHART.ink, 0.55))}, transparent);
+  }
+  .stage::after {
+    bottom: 0;
+    background: linear-gradient(transparent, ${unsafeCSS(withAlpha(CHART.ink, 0.55))});
+  }
+
   .notice {
-    padding: 8px 12px;
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
     font-size: 12px;
     line-height: 1.5;
-    color: var(--semaphore-ink);
+    color: ${parchment};
+    background: ${unsafeCSS(withAlpha(CHART.buoyYellow, 0.16))};
+    border-bottom: 1px solid ${unsafeCSS(withAlpha(CHART.buoyYellow, 0.4))};
+  }
+  .notice::before {
+    content: '';
+    flex: none;
+    width: 3px;
+    border-radius: 2px;
     background: ${unsafeCSS(CHART.buoyYellow)};
   }
 
@@ -76,58 +139,108 @@ export const styles = css`
     position: absolute;
     inset: 0;
     pointer-events: none;
+    z-index: 2;
   }
   .overlay > *,
   .chip {
     pointer-events: auto;
   }
 
-  /* ---- rail ------------------------------------------------------------ */
+  /* ---- floating controls ------------------------------------------------ */
 
-  .rail {
+  .controls {
     position: absolute;
-    top: 12px;
-    left: 12px;
+    left: var(--semaphore-inset);
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    align-items: flex-start;
+    align-items: center;
+    gap: 6px;
+    /* A card can be narrower than its own controls. Scrolling them beats
+       wrapping them into a block that covers the plan. */
+    max-width: calc(100% - var(--semaphore-inset) * 2);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .controls::-webkit-scrollbar {
+    display: none;
+  }
+  .controls.at-top {
+    top: var(--semaphore-inset);
+  }
+  .controls.at-bottom {
+    bottom: var(--semaphore-inset);
   }
 
-  /* The tilt presets read as one control, not three unrelated pills. */
-  .rail .group {
+  /* Levels, and the three readings: one choice with one answer each, so they
+     read as a single control rather than as loose lozenges. */
+  .segmented {
     display: flex;
-    gap: 3px;
+    flex: none;
+    padding: 2px;
+    gap: 2px;
+    border-radius: 999px;
+    background: ${glassBg};
+    border: 1px solid ${glassEdge};
+    backdrop-filter: blur(8px);
   }
 
-  .rail button,
-  .panel header button {
+  .segmented button,
+  button.icon {
     font: inherit;
     font-size: 12px;
+    line-height: 1;
     letter-spacing: 0.02em;
     color: var(--semaphore-parchment);
-    background: rgba(12, 34, 51, 0.74);
-    border: 1px solid rgba(244, 231, 190, 0.18);
+    background: transparent;
+    border: none;
     border-radius: 999px;
-    padding: 5px 12px;
+    padding: 7px 12px;
     cursor: pointer;
-    backdrop-filter: blur(6px);
-    transition: background ${tap} ${ease}, border-color ${tap} ${ease};
+    white-space: nowrap;
+    transition: background ${tap} ${ease}, color ${tap} ${ease};
   }
 
-  .rail button:hover,
-  .panel header button:hover {
-    background: rgba(12, 34, 51, 0.92);
+  button.icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    background: ${glassBg};
+    border: 1px solid ${glassEdge};
+    backdrop-filter: blur(8px);
   }
 
-  .rail button[aria-pressed='true'] {
+  button.icon svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .segmented button:hover,
+  button.icon:hover {
+    background: ${glassEdge};
+  }
+
+  .segmented button[aria-pressed='true'] {
+    background: ${white};
+    color: var(--semaphore-ink);
+    font-weight: 600;
+  }
+  button.icon[aria-pressed='true'] {
     background: ${white};
     border-color: ${white};
     color: var(--semaphore-ink);
   }
 
-  .rail button:focus-visible,
-  .chip:focus-visible {
+  .segmented button:focus-visible,
+  button.icon:focus-visible,
+  .chip:focus-visible,
+  .mark:focus-visible {
     outline: 2px solid ${white};
     outline-offset: 2px;
   }
@@ -136,16 +249,37 @@ export const styles = css`
 
   .status {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: var(--semaphore-inset);
+    right: var(--semaphore-inset);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 46%;
     font-size: 12px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--semaphore-parchment);
-    background: rgba(12, 34, 51, 0.74);
+    letter-spacing: 0.04em;
+    background: ${glassBg};
+    border: 1px solid ${glassEdge};
     border-radius: 999px;
-    padding: 5px 12px;
-    backdrop-filter: blur(6px);
+    padding: 6px 12px;
+    backdrop-filter: blur(8px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The count is what you read; the colour is what you read it with. */
+  .status.nominal {
+    color: var(--semaphore-parchment);
+  }
+  .status .pip {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .status.alert .pip,
+  .status.motion .pip {
+    animation: pulse 1.6s ${ease} infinite;
   }
 
   /* ---- camera chips ---------------------------------------------------- */
@@ -156,24 +290,33 @@ export const styles = css`
     left: 0;
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 9px 3px 3px;
+    gap: 7px;
+    padding: 4px 11px 4px 4px;
     font: inherit;
     font-size: 12px;
-    border: 1px solid currentColor;
+    border: 1px solid ${glassEdge};
     border-radius: 999px;
-    background: rgba(12, 34, 51, 0.8);
+    background: ${glassBgSolid};
     cursor: pointer;
     white-space: nowrap;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(6px);
+    box-shadow: 0 2px 10px ${unsafeCSS(withAlpha(CHART.ink, 0.5))};
     /* Only opacity animates. The transform is written every frame by the
        engine and must never be transitioned, or chips lag behind the map. */
-    transition: opacity ${panel} ${ease};
+    transition: opacity ${panel} ${ease}, border-color ${tap} ${ease};
     will-change: transform;
+  }
+  /* Without a preview there is nothing on the left to balance the padding. */
+  .chip:not(.has-thumb) {
+    padding-left: 11px;
+  }
+  .chip:hover {
+    border-color: ${glassEdgeLit};
   }
 
   .chip .name {
     color: var(--semaphore-parchment);
+    font-weight: 500;
   }
 
   .chip .pip {
@@ -184,29 +327,42 @@ export const styles = css`
     flex: none;
   }
 
-  .chip.alert .pip {
-    animation: pulse 1.6s ${ease} infinite;
+  /* Something to report: the dot gets a halo, so a chip reads at the edge of
+     vision rather than only when looked at. */
+  .chip.alert .pip,
+  .chip.motion .pip {
+    box-shadow: 0 0 0 3px ${unsafeCSS(withAlpha(CHART.parchment, 0.001))};
+    animation: halo 1.8s ${ease} infinite;
+  }
+  .chip.alert {
+    border-color: currentColor;
   }
 
   .chip .thumb {
-    width: 34px;
-    height: 22px;
+    width: 40px;
+    height: 26px;
     object-fit: cover;
-    border-radius: 999px;
+    /* Not a 999px pill: a 16:9 frame squashed into a lozenge is unreadable as
+       a picture, which is the only reason it is there. */
+    border-radius: 999px 4px 4px 999px;
     flex: none;
-    background: rgba(91, 114, 133, 0.4);
+    background: ${unsafeCSS(withAlpha(CHART.slate, 0.35))};
   }
 
-  /* Behind the viewer at high pitch, or on a hidden storey: still there, but
-     no longer competing for attention. */
-  .chip.behind {
-    opacity: 0.28;
+  /* Clamped back onto the stage, so it is a legend entry now, not a pin. */
+  .chip.adrift {
+    opacity: 0.72;
+    border-style: dashed;
   }
+  /* Not on this view at all. Hidden rather than removed, so its footprint stays
+     measurable for the frame it comes back on. */
+  .chip.off {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  /* On a storey that is not the active one: still there, no longer competing. */
   .chip.dim {
-    opacity: 0.4;
-  }
-  .chip.behind.dim {
-    opacity: 0.15;
+    opacity: 0.38;
   }
 
   @keyframes pulse {
@@ -219,32 +375,68 @@ export const styles = css`
     }
   }
 
+  @keyframes halo {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 ${unsafeCSS(withAlpha(CHART.parchment, 0))};
+    }
+    50% {
+      box-shadow: 0 0 0 4px currentColor;
+      opacity: 0.85;
+    }
+  }
+
   /* ---- focus panel ----------------------------------------------------- */
 
   .panel {
     position: absolute;
-    right: 12px;
-    bottom: 12px;
+    right: var(--semaphore-inset);
+    bottom: var(--semaphore-inset);
     width: min(340px, 46%);
     display: flex;
     flex-direction: column;
     gap: 8px;
     padding: 10px;
+    /* Never taller than the scene it floats over: a short stage — a phone, a
+       two-row grid cell — would otherwise get a panel hanging out of the card. */
+    max-height: calc(100% - var(--semaphore-inset) * 2);
+    box-sizing: border-box;
+    overflow: auto;
     border-radius: var(--semaphore-radius);
-    background: rgba(12, 34, 51, 0.88);
-    border: 1px solid rgba(244, 231, 190, 0.16);
-    backdrop-filter: blur(10px);
+    background: ${glassBgSolid};
+    border: 1px solid ${glassEdge};
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 28px ${unsafeCSS(withAlpha(CHART.ink, 0.55))};
     animation: rise ${panel} ${ease} both;
   }
 
   .panel header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 8px;
     color: var(--semaphore-parchment);
     font-size: 13px;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
+  }
+  .panel header .title {
+    flex: 1;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .panel header .pip {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .panel header button.icon {
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border-color: transparent;
   }
 
   .panel .stream {
@@ -280,11 +472,16 @@ export const styles = css`
 
   .timeline {
     position: relative;
-    padding: 8px 12px 10px;
+    padding: 8px var(--pad) 10px;
     background: var(--ha-card-background, var(--card-background-color, transparent));
     /* The label column, shared by the axis and every track, so two cameras
        firing at the same minute line up vertically. */
     --label-w: 76px;
+    --pad: 12px;
+    --gap: 8px;
+    /* Where the track column starts, for anything that has to line up with it
+       without living inside the grid — the scrub. */
+    --track-left: calc(var(--pad) + var(--label-w) + var(--gap));
     font-size: 11px;
   }
 
@@ -293,7 +490,7 @@ export const styles = css`
     display: grid;
     grid-template-columns: var(--label-w) 1fr;
     align-items: center;
-    gap: 8px;
+    gap: var(--gap);
   }
 
   .timeline .track {
@@ -309,7 +506,7 @@ export const styles = css`
 
   .timeline .tracks {
     position: relative;
-    height: 15px;
+    height: 16px;
   }
 
   .timeline .tick {
@@ -319,27 +516,28 @@ export const styles = css`
     color: var(--secondary-text-color, ${slate});
     opacity: 0.75;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
   .timeline .tick.now {
     transform: translateX(-100%);
     opacity: 1;
   }
 
-  /* The empty track, so a camera with nothing to report still reads as a
-     camera rather than as a gap in the list. */
-  .timeline .rail {
+  /* The empty lane, so a camera with nothing to report still reads as a camera
+     rather than as a gap in the list. */
+  .timeline .lane {
     position: absolute;
-    top: 4px;
+    top: 5px;
     height: 7px;
     left: 0;
     right: 0;
     border-radius: 4px;
-    background: rgba(91, 114, 133, 0.22);
+    background: ${unsafeCSS(withAlpha(CHART.slate, 0.22))};
   }
 
   .timeline .mark {
     position: absolute;
-    top: 2px;
+    top: 3px;
     height: 11px;
     min-width: 3px;
     padding: 0;
@@ -348,14 +546,18 @@ export const styles = css`
     cursor: pointer;
     transition: transform ${tap} ${ease};
   }
+  /* A five-second event on a six-hour window is three pixels wide, and three
+     pixels is not something a thumb can hit. The hit area is grown around the
+     mark instead of the mark being grown into a lie about its duration. */
+  .timeline .mark::after {
+    content: '';
+    position: absolute;
+    inset: -7px -5px;
+  }
   .timeline .mark:hover,
   .timeline .mark.on {
-    transform: scaleY(1.3);
+    transform: scaleY(1.35);
     box-shadow: 0 0 0 1px var(--card-background-color, ${ink});
-  }
-  .timeline .mark:focus-visible {
-    outline: 2px solid ${white};
-    outline-offset: 1px;
   }
 
   .timeline .scrub {
@@ -383,7 +585,7 @@ export const styles = css`
     flex-wrap: wrap;
     gap: 10px;
     margin: 8px 0 0;
-    padding-left: calc(var(--label-w) + 8px);
+    padding-left: var(--label-w);
     color: var(--secondary-text-color, ${slate});
   }
   .timeline .legend.quiet {
@@ -407,8 +609,8 @@ export const styles = css`
   .panel .event {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
-    padding: 0 10px 8px;
     font-size: 12px;
     color: ${slate};
   }
@@ -421,6 +623,7 @@ export const styles = css`
   .empty {
     padding: 16px;
     font-size: 13px;
+    line-height: 1.5;
     text-align: center;
     color: var(--secondary-text-color, ${slate});
   }
@@ -433,18 +636,92 @@ export const styles = css`
     color: ${red};
   }
 
+  /* ---- narrow cards ----------------------------------------------------- */
+
+  /* A phone, or a masonry column on a desktop. Same answer either way: the
+     controls give the plan its space back. */
+  @container card (max-width: 460px) {
+    :host {
+      --semaphore-inset: 8px;
+    }
+    .stage.auto-aspect {
+      aspect-ratio: 4 / 3;
+    }
+    .segmented button {
+      padding: 7px 10px;
+    }
+    .status {
+      max-width: 40%;
+    }
+    .chip .thumb {
+      display: none;
+    }
+    .chip {
+      padding-left: 11px;
+    }
+    /* A fixed 76 px label column is a fifth of a phone-width card, taken from
+       the track — which is the part carrying the information. */
+    .timeline {
+      --label-w: 54px;
+      --pad: 10px;
+    }
+  }
+
+  /* Narrower still: the focus panel stops being a corner card and becomes the
+     sheet across the bottom that a phone expects, and the controls it would
+     bury get out of its way. */
+  @container card (max-width: 380px) {
+    .panel {
+      left: var(--semaphore-inset);
+      width: auto;
+    }
+    /* A 16/9 stream across the full width of a phone card is the whole stage,
+       and a sheet that covers everything it was opened from leaves nothing to
+       come back to. Sized from the card's own width so it stays right in a
+       masonry column as well. */
+    .panel .stream {
+      max-height: 40cqw;
+    }
+    .stage.focused .controls.at-bottom {
+      display: none;
+    }
+  }
+
+  /* A finger is not a mouse pointer. Everything it has to hit gets the room to
+     be hit, on the axis where there is room to give. */
+  @media (pointer: coarse) {
+    .segmented button {
+      padding: 9px 13px;
+    }
+    button.icon {
+      width: 36px;
+      height: 36px;
+    }
+    .timeline .tracks {
+      height: 20px;
+    }
+    .timeline .mark::after {
+      inset: -10px -7px;
+    }
+  }
+
   /* An orbiting view and a sweeping sector are ambient motion, not information.
      Anyone who asked the OS to stop that gets a still card. */
   @media (prefers-reduced-motion: reduce) {
     .chip,
     .panel,
-    .rail button {
+    .segmented button,
+    button.icon,
+    .timeline .mark {
       animation: none !important;
       transition: none !important;
     }
-    .chip.alert .pip {
+    .chip.alert .pip,
+    .chip.motion .pip,
+    .status .pip {
       animation: none;
       opacity: 1;
+      box-shadow: none;
     }
   }
 `;

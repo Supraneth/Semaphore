@@ -105,6 +105,7 @@ export class Scene {
     const measure = (): void => {
       const rect = host.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
+      const resized = rect.width !== this.view.width || rect.height !== this.view.height;
       this.renderer.resize(rect.width, rect.height);
       // Home Assistant lays a card out *after* creating it — a dashboard view
       // that is not the active tab, a masonry column that sizes on the next
@@ -114,6 +115,21 @@ export class Scene {
       // off-screen. The first measurement that yields real pixels is therefore
       // where framing has to happen, not construction time.
       if (!this.framed && !this.config.view?.center) this.frame();
+      // And every measurement after it, because a zoom is pixels per metre
+      // against a box that has just changed: a phone turning on its side, a
+      // masonry column reflowing, the sections grid's own resize handles. The
+      // house left the canvas on every one of those. Framing a view the user
+      // placed themselves would be worse than the crop, so their angle wins —
+      // until they press "Cadrer", which is the request to have it back.
+      //
+      // `editing` is excluded outright: the standalone editor drives the view
+      // through `Renderer.view` and never through `ViewControls`, so nothing
+      // here can tell that someone has spent a minute positioning the plan they
+      // are drawing. Re-fitting the window they just resized would throw it
+      // away. The editor has its own "Tout cadrer" for when it is wanted.
+      else if (resized && !this.userFramed && !this.focusCamera && !this.editing) {
+        this.frame();
+      }
       this.invalidate();
     };
     measure();
@@ -123,6 +139,7 @@ export class Scene {
 
     this.controls = new ViewControls(this.canvas, this.view, {
       onChange: () => {
+        this.userFramed = true;
         this.noteInteraction();
         this.cb.onViewMoved?.();
       },
@@ -163,11 +180,18 @@ export class Scene {
 
   /** True once the scene has been fitted against a canvas with real pixels. */
   private framed = false;
+  /**
+   * The user placed this view by hand, so the card must stop re-fitting it on
+   * every resize. Cleared by `frame()` — asking to frame is asking for the
+   * automatic behaviour back.
+   */
+  private userFramed = false;
 
   /** Frames everything the scene contains. */
   frame(): void {
     if (!this.view.width || !this.view.height) return;
     this.framed = true;
+    this.userFramed = false;
     const points = allPoints(
       this.config.levels,
       this.config.cameras.map((c) => c.position),
@@ -265,8 +289,16 @@ export class Scene {
     this.frame();
   }
 
+  /** Where the view stood before a focus flight, so leaving can undo it. */
+  private beforeFocus?: ReturnType<View['snapshot']>;
+
   focus(name: string | null): void {
+    // Only the first focus records a return point: hopping straight from one
+    // camera to another must still come back to the overview, not to the
+    // previous camera's flight.
+    if (name && !this.focusCamera) this.beforeFocus = this.view.snapshot();
     this.focusCamera = name;
+
     if (name) {
       const rt = this.runtimes.get(name);
       if (rt) {
@@ -278,6 +310,14 @@ export class Scene {
         this.view.zoom = Math.max(18, Math.min(90, 420 / Math.max(4, rt.config.range)));
         this.view.refresh();
       }
+    } else if (this.beforeFocus) {
+      // Leaving focus put the user wherever the last camera happened to point.
+      // The overview they came from is the one thing they asked for.
+      Object.assign(this.view, this.beforeFocus, {
+        center: [...this.beforeFocus.center] as Point,
+      });
+      this.view.refresh();
+      this.beforeFocus = undefined;
     }
     this.noteInteraction();
   }

@@ -10,6 +10,11 @@ import type { View } from './view';
  * with a touch story — a card is read on a phone at least as often as on a
  * desktop, and a right-drag does not exist there.
  *
+ * On a finger the split is by axis, not by button: sideways turns the house,
+ * downwards scrolls the dashboard, two fingers pinch and slide. A card that
+ * swallowed every touch was a card you could not scroll past, which is the one
+ * thing a phone user does with a dashboard more often than reading any of it.
+ *
  * Deliberately not a click handler. The camera chips are DOM elements floating
  * above the canvas, so selection is theirs and this file never has to guess
  * whether a press was a tap or the start of a drag.
@@ -105,7 +110,11 @@ export class ViewControls {
     this.mode =
       ev.button === 1 || ev.button === 2 || ev.altKey || ev.shiftKey ? 'pan' : 'orbit';
     this.last = this.local(ev);
+    this.touch = ev.pointerType === 'touch';
   };
+
+  /** Whether the gesture in progress came from a finger. */
+  private touch = false;
 
   private onMove = (ev: PointerEvent): void => {
     if (!this.pointers.has(ev.pointerId)) return;
@@ -122,9 +131,14 @@ export class ViewControls {
       this.last = centre;
     } else if (this.mode === 'orbit') {
       view.yaw += (p.x - this.last.x) * YAW_PER_PIXEL;
+      // Vertical belongs to the page on a touch screen — `touch-action: pan-y`
+      // hands one finger's downward drag to the dashboard's scroll, and tilting
+      // by the few pixels the browser lets through before it takes over would
+      // leave the scene at a random pitch every time someone scrolled past the
+      // card. The three presets are how a phone changes pitch.
+      if (!this.touch) view.pitch -= (p.y - this.last.y) * PITCH_PER_PIXEL;
       // `refresh` clamps the pitch short of edge-on, where the floor plane
       // collapses to a line and `unproject` would divide by zero.
-      view.pitch -= (p.y - this.last.y) * PITCH_PER_PIXEL;
       view.refresh();
       this.last = p;
     } else if (this.mode === 'pan') {

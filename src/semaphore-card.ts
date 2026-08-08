@@ -1,4 +1,4 @@
-import { LitElement, html, nothing, type TemplateResult } from 'lit';
+import { LitElement, html, nothing, svg, type TemplateResult } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { ref } from 'lit/directives/ref.js';
@@ -22,6 +22,33 @@ import { DEFAULT_VIEW, VIEW_PRESETS, presetOf, type ViewPreset } from './plan/vi
 
 const TICK_MS = 100;
 const THUMB_REFRESH_MS = 10_000;
+
+/**
+ * The four glyphs the chrome needs, inline.
+ *
+ * Not `ha-icon`: that pulls Home Assistant's whole icon set for four shapes, and
+ * the standalone bench has no such element to render. Drawn on a 24-grid in
+ * `currentColor`, so a button's own state colours its glyph.
+ */
+/** How far a chip may be pulled back onto the stage before it is simply gone. */
+const CHIP_CLAMP_PX = 44;
+
+/** Hour steps that keep an axis reading in round numbers. */
+const HOUR_STEPS = [1, 2, 3, 6, 12, 24];
+/** Narrowest a labelled hour mark can sit next to the one before it. */
+const TICK_MIN_PX = 64;
+/** Room kept clear at the right for "maintenant". */
+const NOW_LABEL_PX = 78;
+
+const ICON = {
+  /** Storeys pulled apart. */
+  split: svg`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h16M4 15h16M12 2v4m0 12v4M9.5 4.5 12 2l2.5 2.5M9.5 19.5 12 22l2.5-2.5"/></svg>`,
+  /** Storeys back on top of each other. */
+  stack: svg`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`,
+  /** Fit everything on screen: corner brackets. */
+  frame: svg`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>`,
+  close: svg`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>`,
+} as const;
 
 @customElement('semaphore-card')
 export class SemaphoreCard extends LitElement {
@@ -125,7 +152,22 @@ export class SemaphoreCard extends LitElement {
     const cap = this.config['max-height'];
     const max = cap ? `${cap}px` : '74vh';
     if (this.config.height) return `height:${this.config.height}px;max-height:${max}`;
-    return `aspect-ratio:${this.config['aspect-ratio'] ?? '16 / 10'};max-height:${max}`;
+    if (this.config['aspect-ratio']) {
+      return `aspect-ratio:${this.config['aspect-ratio']};max-height:${max}`;
+    }
+    // No shape asked for: the stylesheet picks one from the card's own width.
+    // 16/10 on a phone-width card is a 240 px scene with a control bar at each
+    // end, and the plan lives on what is left. Only a container query knows how
+    // wide the card actually is, and an inline style cannot carry one.
+    return `max-height:${max}`;
+  }
+
+  /** True when the shape of the scene is the stylesheet's call, not the config's. */
+  private get autoAspect(): boolean {
+    const rows = (this.config as Record<string, any>).grid_options?.rows;
+    return (
+      typeof rows !== 'number' && !this.config.height && !this.config['aspect-ratio']
+    );
   }
 
   static getStubConfig(): Partial<SemaphoreConfig> {
@@ -139,7 +181,11 @@ export class SemaphoreCard extends LitElement {
   // ---- lifecycle ----------------------------------------------------------
 
   override firstUpdated(): void {
-    void this.boot();
+    // Booting sets `ready`, and setting reactive state from inside the update
+    // that has just finished is what makes Lit schedule a second one and warn
+    // about it. One task is enough to be clear of the cycle, and the canvas is
+    // already in the DOM by then.
+    setTimeout(() => void this.boot(), 0);
     this.io = new IntersectionObserver(
       ([entry]) => this.setActive(entry.isIntersecting && !document.hidden),
       { threshold: 0.01 },
@@ -151,6 +197,7 @@ export class SemaphoreCard extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this.io?.disconnect();
+    this.timelineObserver?.disconnect();
     document.removeEventListener('visibilitychange', this.onVisibility);
     clearInterval(this.tick);
     clearInterval(this.thumbTimer);
@@ -215,6 +262,7 @@ export class SemaphoreCard extends LitElement {
 
   override updated(): void {
     this.bridge?.setHass(this.hass);
+    this.measureChips();
   }
 
   // ---- the one tick -------------------------------------------------------
@@ -273,15 +321,75 @@ export class SemaphoreCard extends LitElement {
     else this.chipEls.delete(name);
   }
 
+  /**
+   * Chips follow the scene, and stay inside it.
+   *
+   * A camera near the edge of the plan used to have half its chip cut off by the
+   * card — the label that says which camera it is being exactly the half that
+   * left. Clamping keeps the whole chip on the stage; the mast drawn on the
+   * canvas is what still ties it to its real place on the floor.
+   *
+   * Sizes come from the cache rather than from `offsetWidth` here: this runs on
+   * every frame of an orbit, and reading layout back after writing a transform
+   * is the classic way to make a smooth animation stutter.
+   */
   private positionChips(): void {
     if (!this.scene) return;
+    const stage = this.stageEl;
+    const width = stage?.clientWidth ?? 0;
+    const height = stage?.clientHeight ?? 0;
+
     for (const cam of this.config.cameras) {
       const el = this.chipEls.get(cam.name);
       if (!el) continue;
       const { x, y } = this.scene.project(cam);
-      el.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) translate(-50%, -50%)`;
+      const size = this.chipSizes.get(cam.name);
+
+      let px = x;
+      let py = y;
+      if (size && width && height) {
+        const halfW = size.w / 2 + 4;
+        const halfH = size.h / 2 + 4;
+        // Only clamp when there is room to: on a card narrower than the chip,
+        // centring beats pinning it to an edge it overflows in both directions.
+        if (width > size.w + 8) px = Math.max(halfW, Math.min(width - halfW, x));
+        if (height > size.h + 8) py = Math.max(halfH, Math.min(height - halfH, y));
+      }
+
+      // The focused camera already has the panel carrying its name and state,
+      // and the flight puts its lens near the top of the stage where the chip
+      // lands on the storey control. Two labels for one camera, one of them in
+      // the way.
+      if (this.focused === cam.name) {
+        el.classList.add('off');
+        continue;
+      }
+
+      const drift = Math.hypot(px - x, py - y);
+      // Past the budget the camera is not near the edge, it is somewhere else
+      // entirely — zoomed past, or behind the lens of a focus flight. Dragging
+      // it back would stack every absent camera in the same corner, which is
+      // how the overview turned into a pile of chips the moment one was
+      // focused. Beyond the budget a chip is simply not on this view.
+      const off = drift > CHIP_CLAMP_PX;
+      el.classList.toggle('off', off);
+      if (off) continue;
+
+      el.style.transform = `translate3d(${Math.round(px)}px, ${Math.round(py)}px, 0) translate(-50%, -50%)`;
+      // Pushed off its true spot, the chip is a legend entry rather than a pin,
+      // and it should not claim the precision it no longer has.
+      el.classList.toggle('adrift', drift > 1);
       const onLevel = (cam.level ?? this.config.levels[0].id) === this.activeLevel;
       el.classList.toggle('dim', !onLevel && !this.exploded);
+    }
+  }
+
+  /** Chip footprints, remeasured only when the DOM that draws them changed. */
+  private chipSizes = new Map<string, { w: number; h: number }>();
+
+  private measureChips(): void {
+    for (const [name, el] of this.chipEls) {
+      this.chipSizes.set(name, { w: el.offsetWidth, h: el.offsetHeight });
     }
   }
 
@@ -345,11 +453,14 @@ export class SemaphoreCard extends LitElement {
     return html`
       <ha-card>
         ${this.migrated ? this.renderMigrationNotice() : nothing}
-        <div class="stage" style=${this.stageStyle()}>
+        <div
+          class="stage ${this.focused ? 'focused' : ''} ${this.autoAspect ? 'auto-aspect' : ''}"
+          style=${this.stageStyle()}
+        >
           <canvas class="canvas"></canvas>
           <div class="overlay">
-            ${this.renderRail()} ${this.renderStatus()} ${this.renderChips()}
-            ${this.renderPanel()}
+            ${this.renderLevels()} ${this.renderStatus()} ${this.renderChips()}
+            ${this.renderViewControls()} ${this.renderPanel()}
           </div>
         </div>
         ${this.renderTimeline()}
@@ -369,24 +480,42 @@ export class SemaphoreCard extends LitElement {
     `;
   }
 
-  private renderRail(): TemplateResult {
+  /**
+   * Storeys, top left.
+   *
+   * A segmented control rather than a stack of pills: they are one choice with
+   * one answer, and five separate lozenges down the left edge covered a third of
+   * the scene on a phone.
+   */
+  private renderLevels(): TemplateResult | typeof nothing {
     const levels = this.config.levels;
+    if (levels.length < 2) return nothing;
     return html`
-      <div class="rail">
-        ${levels.length > 1
-          ? levels.map(
-              (l) => html`<button
-                aria-pressed=${l.id === this.activeLevel}
-                @click=${() => this.selectLevel(l.id)}
-              >${l.name}</button>`,
-            )
-          : nothing}
-        ${levels.length > 1
-          ? html`<button aria-pressed=${this.exploded} @click=${this.toggleExplode}>
-              ${this.exploded ? 'Empiler' : 'Séparer'}
-            </button>`
-          : nothing}
-        <div class="group">
+      <div class="controls at-top">
+        <div class="segmented">
+          ${levels.map(
+            (l) => html`<button
+              aria-pressed=${l.id === this.activeLevel}
+              @click=${() => this.selectLevel(l.id)}
+            >${l.name}</button>`,
+          )}
+        </div>
+        <button
+          class="icon"
+          aria-pressed=${this.exploded}
+          title=${this.exploded ? 'Empiler les niveaux' : 'Séparer les niveaux'}
+          aria-label=${this.exploded ? 'Empiler les niveaux' : 'Séparer les niveaux'}
+          @click=${this.toggleExplode}
+        >${this.exploded ? ICON.stack : ICON.split}</button>
+      </div>
+    `;
+  }
+
+  /** Readings and framing, bottom left — away from the panel and the chips. */
+  private renderViewControls(): TemplateResult {
+    return html`
+      <div class="controls at-bottom">
+        <div class="segmented">
           ${VIEW_PRESETS.map(
             (p) => html`<button
               aria-pressed=${this.preset?.id === p.id}
@@ -395,24 +524,63 @@ export class SemaphoreCard extends LitElement {
             >${p.label}</button>`,
           )}
         </div>
-        <button @click=${() => this.scene?.frame()} title="Tout cadrer">Cadrer</button>
+        <button
+          class="icon"
+          title="Tout cadrer"
+          aria-label="Tout cadrer"
+          @click=${() => this.scene?.frame()}
+        >${ICON.frame}</button>
       </div>
     `;
   }
 
+  /**
+   * One line on the state of the house.
+   *
+   * It carries the colour of what it is reporting, because a pill that reads
+   * "2 détections" in the same parchment as "tout est calme" is a sentence you
+   * have to finish before you know whether to care.
+   */
   private renderStatus(): TemplateResult {
     const alerts = [...this.states.values()].filter((s) => s === 'alert').length;
+    const moving = [...this.states.values()].filter((s) => s === 'motion').length;
     const off = [...this.states.values()].filter((s) => s === 'offline').length;
-    const text = alerts
-      ? `${alerts} détection${alerts > 1 ? 's' : ''}`
-      : off
-        ? `${off} hors ligne`
-        : 'Tout est calme';
-    return html`<div class="status">${text}</div>`;
+
+    let tone: CameraState = 'nominal';
+    let text = 'Tout est calme';
+    if (alerts) {
+      tone = 'alert';
+      text = `${alerts} détection${alerts > 1 ? 's' : ''}`;
+    } else if (moving) {
+      tone = 'motion';
+      text = `${moving} mouvement${moving > 1 ? 's' : ''}`;
+    } else if (off) {
+      tone = 'offline';
+      text = `${off} hors ligne`;
+    }
+    return html`<div class="status ${tone}" style="color:${STATE_STYLES[tone].css}">
+      <span class="pip"></span>${text}
+    </div>`;
   }
 
   private renderChips(): TemplateResult {
     return html`${repeat(this.config.cameras, (c) => c.name, (cam) => this.renderChip(cam))}`;
+  }
+
+  /**
+   * Cameras whose preview will not load.
+   *
+   * Outside Home Assistant — and inside it for any camera without a snapshot —
+   * `entity_picture` resolves to nothing, and the broken-image placeholder
+   * Chrome draws for it is a grey box with the entity id in it, sitting on the
+   * plan. Four of those were the ugliest thing on the card. One failure is
+   * enough to stop asking.
+   */
+  @state() private noThumb = new Set<string>();
+
+  private thumbFailed(name: string): void {
+    if (this.noThumb.has(name)) return;
+    this.noThumb = new Set(this.noThumb).add(name);
   }
 
   private renderChip(cam: CameraConfig): TemplateResult {
@@ -421,20 +589,29 @@ export class SemaphoreCard extends LitElement {
     // At rest a camera wears its own colour, so four quiet cones stay telling
     // apart; the moment it has something to report the legend takes over.
     const css = state === 'nominal' && cam.color ? cam.color : style.css;
-    const thumb = this.bridge?.livePreviewUrl(cam);
+    const label = cam.label ?? cam.name;
+    const thumb = this.noThumb.has(cam.name) ? undefined : this.bridge?.livePreviewUrl(cam);
     return html`
       <button
-        class="chip ${state}"
+        class="chip ${state} ${thumb ? 'has-thumb' : ''}"
         style="color:${css}"
-        title=${style.caption}
+        title="${label} — ${style.caption}"
+        aria-label="${label} — ${style.caption}"
         ${ref((el) => this.bindChip(cam.name, el))}
         @click=${() => this.focusCamera(cam.name)}
       >
         ${thumb
-          ? html`<img class="thumb" src="${thumb}&_=${this.thumbNonce}" alt="" decoding="async" loading="lazy" />`
+          ? html`<img
+              class="thumb"
+              src="${thumb}&_=${this.thumbNonce}"
+              alt=""
+              decoding="async"
+              loading="lazy"
+              @error=${() => this.thumbFailed(cam.name)}
+            />`
           : nothing}
         <span class="pip"></span>
-        <span class="name">${cam.label ?? cam.name}</span>
+        <span class="name">${label}</span>
       </button>
     `;
   }
@@ -448,8 +625,14 @@ export class SemaphoreCard extends LitElement {
     return html`
       <div class="panel">
         <header>
-          <span>${cam.label ?? cam.name}</span>
-          <button @click=${this.unfocus}>Vue d'ensemble</button>
+          <span class="pip" style="color:${STATE_STYLES[state].css}"></span>
+          <span class="title">${cam.label ?? cam.name}</span>
+          <button
+            class="icon"
+            title="Revenir à la vue d'ensemble"
+            aria-label="Revenir à la vue d'ensemble"
+            @click=${this.unfocus}
+          >${ICON.close}</button>
         </header>
         ${stateObj
           ? html`<ha-camera-stream class="stream" .hass=${this.hass} .stateObj=${stateObj} allow-exoplayer muted></ha-camera-stream>`
@@ -510,7 +693,7 @@ export class SemaphoreCard extends LitElement {
       >
         <div class="axis">
           <span class="track-label"></span>
-          <div class="tracks">
+          <div class="tracks" ${ref((el) => this.watchTimeline(el))}>
             ${this.ticks().map(
               (t) => html`<span class="tick" style="left:${place(t)}%">${hourLabel(t)}</span>`,
             )}
@@ -523,7 +706,7 @@ export class SemaphoreCard extends LitElement {
         ${this.cursor !== null
           ? html`<div
               class="scrub"
-              style="left:calc(var(--label-w) + (100% - var(--label-w) - 24px) * ${place(this.cursor) / 100})"
+              style="left:calc(var(--track-left) + (100% - var(--track-left) - var(--pad)) * ${place(this.cursor) / 100})"
             >
               <span class="time">${clockLabel(this.cursor)}</span>
             </div>`
@@ -540,7 +723,7 @@ export class SemaphoreCard extends LitElement {
       <div class="track">
         <span class="track-label" title=${cam.label ?? cam.name}>${cam.label ?? cam.name}</span>
         <div class="tracks">
-          <div class="rail"></div>
+          <div class="lane"></div>
           ${marks.map((m) => {
             const start = place(m.startTime);
             const end = place(m.endTime ?? this.now);
@@ -578,18 +761,66 @@ export class SemaphoreCard extends LitElement {
     `;
   }
 
-  /** Round hour marks, thinned so the labels never collide. */
+  /**
+   * Round hour marks, thinned to the width there actually is.
+   *
+   * The step used to be a ladder off `timeline-hours` alone and the last mark
+   * was dropped if it fell inside a fixed 6 % of the span. Both are guesses
+   * about width, and on a phone both were wrong: `14 h` printed straight
+   * through `maintenant`, and six labels fought over 240 px. Pixels are the
+   * thing being run out of, so pixels are what the step is chosen from — the
+   * measured track, an hour ladder that keeps the marks round, and a right-hand
+   * margin wide enough for the word that sits there.
+   */
   private ticks(): number[] {
     const hours = this.config['timeline-hours'] ?? 24;
-    const step = hours <= 3 ? 1 : hours <= 8 ? 2 : hours <= 16 ? 4 : 6;
+    const track = this.trackWidth;
+    const room = Math.max(1, Math.floor(track / TICK_MIN_PX));
+    const step = HOUR_STEPS.find((s) => hours / s <= room) ?? HOUR_STEPS[HOUR_STEPS.length - 1];
+
+    // "maintenant" is anchored to the right edge; anything under it reads as a
+    // second label for the same instant.
+    const reserved = this.span * (NOW_LABEL_PX / track);
+
     const out: number[] = [];
     const top = new Date(this.now);
     top.setMinutes(0, 0, 0);
     for (let t = top.getTime(); t > this.now - this.span; t -= step * 3600_000) {
-      // The last tick would sit under "maintenant" and read as a second label.
-      if (this.now - t > this.span * 0.06) out.push(t);
+      if (this.now - t > reserved) out.push(t);
     }
     return out;
+  }
+
+  /**
+   * Width of the track area, in pixels.
+   *
+   * Measured rather than assumed: the same card is 1000 px wide in a panel view
+   * and 320 px in a masonry column on a phone, and the axis has to be right in
+   * both without the dashboard telling it which it is.
+   */
+  private trackWidth = 600;
+
+  private timelineObserver?: ResizeObserver;
+  private trackEl?: Element;
+
+  private watchTimeline(el: Element | undefined): void {
+    // `ref` runs on every render; re-observing the same element each time would
+    // tear the observer down and rebuild it a few times a second.
+    if (el === this.trackEl) return;
+    this.trackEl = el;
+    this.timelineObserver?.disconnect();
+    if (!el) return;
+
+    this.timelineObserver = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry.contentRect.width);
+      // A pixel either way changes no label. Re-rendering the timeline on every
+      // sub-pixel reflow would, and the first measurement always lands inside
+      // the update that created the element — which is what Lit warns about.
+      if (!w || Math.abs(w - this.trackWidth) < 8) return;
+      this.trackWidth = w;
+      setTimeout(() => this.requestUpdate(), 0);
+    });
+    this.timelineObserver.observe(el);
   }
 }
 

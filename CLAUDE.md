@@ -19,10 +19,19 @@ Complet et exécuté — mais jamais dans un vrai Home Assistant.
 Vérifié mécaniquement :
 
 - `tsc --noEmit` strict passe, `vite build` produit `dist/semaphore.js`
-  (~33 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur).
+  (~38 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur).
 - **La carte se manipule** : glisser pivote, molette et pincement zooment, le
   pincement ne fait pas tourner, et plus aucun préréglage ne s'attribue un angle
   trouvé à la main. Vérifié en pilotant de vrais événements souris et tactiles.
+- **Le chrome s'adapte à la carte, pas à la fenêtre** : à 360 px de large les
+  vignettes disparaissent, la colonne d'étiquettes tombe à 54 px, la scène passe
+  en 4/3 et le panneau de focus devient une feuille pleine largeur plafonnée.
+  Vérifié en pilotant la largeur du conteneur, console propre.
+- **Un redimensionnement recadre** tant que l'utilisateur n'a pas placé la vue
+  lui-même ; **Cadrer** rend la main au recadrage automatique. Vérifié :
+  1080 → 360 px change bien le zoom, une vue tournée à la main y survit.
+- **Sortir du focus redonne exactement la vue d'avant** — yaw, pitch, zoom et
+  centre identiques.
 - Les murs sont opaques : le dessus d'un mur mesure exactement `#EFE7D4`.
 - Une couleur par caméra teinte bien le secteur au repos.
 - **La timeline est vérifiée sur ce qu'elle affiche** : pistes nommées, axe des
@@ -173,14 +182,21 @@ c'est probablement le changement qui a tort.
     nommant l'entrée et le champ fautifs. Une `TypeError` au-dessus d'une carte
     vide n'apprend rien à personne.
 
-15. **Tout changement de pitch ou d'éclatement recadre.** Aplatir une vue à 45°
-    rend la scène 40 % plus haute à l'écran ; séparer les étages y ajoute
-    plusieurs mètres. Sans recadrage, le bâtiment quitte le canvas.
+15. **Tout changement de pitch, d'éclatement ou de taille recadre.** Aplatir une
+    vue à 45° rend la scène 40 % plus haute à l'écran ; séparer les étages y
+    ajoute plusieurs mètres. Sans recadrage, le bâtiment quitte le canvas.
     Corollaire : **le premier cadrage a lieu à la première mesure non nulle du
     canvas**, pas à la construction. Home Assistant crée une carte avant de la
     dimensionner — onglet inactif, colonne de maçonnerie, aperçu d'éditeur — et
     `View.fit` sur un canvas de 0 × 0 est un no-op silencieux. Voir
     `Scene.framed`.
+    Second corollaire : **chaque mesure suivante recadre aussi**, car un zoom est
+    un nombre de pixels par mètre contre une boîte qui vient de changer —
+    téléphone qui bascule, colonne qui se refond, poignées de la grille en
+    sections. Le bâtiment quittait le canvas à chacun de ces cas. L'exception est
+    une vue que l'utilisateur a placée lui-même : elle l'emporte jusqu'à ce qu'il
+    demande **Cadrer**, qui est précisément la demande de la reprendre. Voir
+    `Scene.userFramed`.
 
 16. **Le lacet fait partie de la lecture, pas seulement l'inclinaison.** À lacet
     0 on regarde dans l'axe +y : tous les murs est-ouest sont vus de profil et
@@ -203,6 +219,12 @@ c'est probablement le changement qui a tort.
     clic droit n'existe pas. Et dès que l'utilisateur tourne à la main, plus
     aucun préréglage ne se déclare actif — un bouton qui prétend décrire un
     angle qu'il ne décrit pas est pire que pas de bouton.
+    Au doigt, le partage se fait **par axe** : de côté on tourne, vers le bas la
+    page défile (`touch-action: pan-y`, et l'inclinaison n'est pas appliquée pour
+    un pointeur tactile). Une carte qui avalait tout le tactile était une carte
+    qu'on ne pouvait pas dépasser en faisant défiler, ce qu'un utilisateur de
+    téléphone fait plus souvent que lire la carte. L'inclinaison au doigt passe
+    par les trois préréglages, qui sont là pour ça.
 
 19. **Une couleur personnalisée ne remplace que l'état de repos.** Les quatre
     autres états gardent la palette : ce sont eux la légende. Un rouge qui
@@ -218,11 +240,22 @@ c'est probablement le changement qui a tort.
     retire.
 
 21. **La carte ne décide de sa taille qu'à défaut.** Une cellule de grille de
-    Home Assistant l'emporte sur `height`, qui l'emporte sur `aspect-ratio`.
+    Home Assistant l'emporte sur `height`, qui l'emporte sur `aspect-ratio`,
+    qui l'emporte sur la proportion choisie par la feuille de style.
     `getGridOptions()` est ce qui fait apparaître les poignées de
     redimensionnement ; sans lui la carte est figée. Et le cas « le tableau de
     bord annonce des rangées puis ne donne aucune hauteur » a besoin d'un
     plancher, sinon la scène tombe à zéro pixel.
+
+23. **Le responsive répond à la carte, jamais à la fenêtre.** Tout est en
+    `@container` sur `ha-card`, pas en `@media`. La même carte fait 1100 px dans
+    une vue panneau et 320 px dans la seconde colonne de maçonnerie de la même
+    fenêtre : le viewport ne sait pas les distinguer, la carte si. Un `@media`
+    ici règle le mauvais problème et se trompe dans les deux sens.
+    C'est aussi pourquoi `stageStyle()` n'émet **pas** de proportion quand la
+    config n'en nomme pas : un style en ligne ne peut pas porter de requête de
+    conteneur, donc la forme par défaut (16/10, et 4/3 sous 460 px) vit dans la
+    feuille de style, via `.stage.auto-aspect`.
 
 22. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
     est dessiné comme une seule silhouette — objectif, puis le pourtour de
@@ -318,11 +351,12 @@ HA ne peut trancher. Chacun a un repli qui évite que l'échec soit fatal.
 ## Défauts connus
 
 - Les chips de caméra (DOM) peuvent recouvrir les libellés de pièce (canvas).
-  Aucune détection de collision entre les deux calques.
-- Le mode focus recadre la vue mais ne la restaure pas en sortant.
-- Sur mobile, la scène capte le glissé à un doigt : on ne peut pas faire défiler
-  le tableau de bord en partant de la carte. `touch-action: none` était déjà là
-  avant que le geste serve à quelque chose, donc rien n'a régressé — mais un
-  doigt qui fait défiler et deux qui pivotent serait plus poli.
+  Aucune détection de collision entre les deux calques. Les chips ont désormais
+  une ombre portée et un fond opaque, donc elles se lisent comme un calque
+  au-dessus plutôt que comme une bouillie — mais le recouvrement reste.
 - L'angle trouvé à la main n'est pas mémorisé : recharger la page remet la vue
   de la config.
+- Une chip tirée sur le bord de la scène passe en pointillés (`adrift`) et
+  disparaît au-delà de 44 px de correction (`off`). C'est ce qui empêche les
+  caméras absentes de s'empiler dans un coin pendant un focus, mais une caméra
+  juste hors champ est simplement invisible plutôt que signalée par une flèche.

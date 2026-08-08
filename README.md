@@ -80,7 +80,7 @@ réglage d'inclinaison.
 
 Une maison fait quelques centaines de polygones. Le GPU n'apportait rien et
 coûtait le texte net, le hit-testing simple, et 310 kB de MapLibre. Le bundle
-complet fait **33 kB gzip**, sans autre dépendance que Lit.
+complet fait **38 kB gzip**, sans autre dépendance que Lit.
 
 L'éditeur n'en fait pas partie. Une carte de tableau de bord qui embarque aussi
 un outil de dessin fait payer à chaque chargement, à tout le monde, un outil
@@ -178,9 +178,17 @@ La scène se manipule directement, sans entrer dans aucun mode :
 
 | Geste | Effet |
 |---|---|
-| glisser | faire pivoter et incliner |
+| glisser à la souris | faire pivoter et incliner |
+| un doigt de côté | faire pivoter |
+| un doigt vers le bas | faire défiler le tableau de bord |
 | molette · pincement à deux doigts | zoomer |
 | deux doigts qui glissent · `Alt`, `Maj`, clic droit ou milieu | déplacer |
+
+Au doigt, le partage se fait par axe et non par bouton : de côté on tourne la
+maison, vers le bas on fait défiler la page. Une carte qui avalait tout le
+tactile était une carte qu'on ne pouvait pas dépasser au doigt sur un téléphone,
+et c'est ce qu'on fait d'un tableau de bord plus souvent que de le lire.
+L'inclinaison, au doigt, passe par les trois préréglages.
 
 Et le rail porte trois préréglages — **Plan**, **2.5D**, **Relief**. Ils changent
 l'inclinaison *et* le lacet ensemble, parce que l'un sans l'autre ne donne pas de
@@ -434,7 +442,7 @@ un vrai Home Assistant.
 | Vérification | Résultat |
 |---|---|
 | `tsc --noEmit` strict | passe |
-| `vite build` | `dist/semaphore.js`, **33 kB gzip** — l'éditeur n'y est pas |
+| `vite build` | `dist/semaphore.js`, **38 kB gzip** — l'éditeur n'y est pas |
 | Rendu réel (Chromium headless) | le canvas se peint, aucune erreur console |
 | Éditeur de bout en bout | chaîne de murs, longueur tapée (4,20 m → 4,200 m), annuler/refaire au geste près, percement d'une porte, copie YAML |
 | Éditeur autonome piloté (Chromium headless, 32 contrôles) | tracé, longueur au clavier, annuler/refaire, pose et annulation d'une caméra, ajout et duplication de niveau, import d'un YAML écrit à la main, refus d'un YAML fautif en nommant la ligne, persistance après rechargement, export relu |
@@ -442,6 +450,9 @@ un vrai Home Assistant.
 | Cadrage dans les conditions de Home Assistant | une carte créée dans un conteneur de 0 × 0 puis dimensionnée se cadre dès qu'elle reçoit des pixels ; une config portant sa propre `view` est laissée où elle est |
 | Lecture 2.5D | volume de couverture et mât peints à 45°, absents à plat ; les trois préréglages changent bien inclinaison et lacet |
 | Navigation dans la carte | glisser fait pivoter, la molette et le pincement zooment, le pincement ne fait pas tourner, plus aucun préréglage ne s'attribue un angle trouvé à la main |
+| Recadrage au redimensionnement | une carte qui change de largeur se recadre ; une vue placée à la main survit au redimensionnement ; **Cadrer** rend la main au recadrage automatique |
+| Retour de focus | ouvrir une caméra puis fermer le panneau redonne exactement la vue d'ensemble d'avant |
+| Chrome adaptatif | à 360 px de carte : vignettes retirées, colonne d'étiquettes réduite, scène en 4/3, panneau en feuille pleine largeur plafonnée |
 | Carte dépouillée | plus de bouton d'édition, plus d'interface d'éditeur dans le DOM |
 | Murs opaques | le dessus d'un mur mesure exactement `#EFE7D4` au pixel, pas une version délavée |
 | Couleur par caméra | teinter toutes les caméras en vert puis en rouge inverse bien l'écart vert-rouge moyen du canvas |
@@ -456,10 +467,8 @@ disponibilité de `ha-camera-stream`. Chacun a un repli qui évite que l'échec 
 fatal — voir `CLAUDE.md`.
 
 **Défauts connus** : les chips de caméra peuvent recouvrir les libellés de pièce
-(deux calques, aucune détection de collision) ; le mode focus recadre la vue mais
-ne la restaure pas en sortant ; sur mobile la scène capte le glissé à un doigt,
-donc on ne fait pas défiler le tableau de bord en partant de la carte ; l'angle
-trouvé à la main n'est pas mémorisé d'un chargement à l'autre.
+(deux calques, aucune détection de collision) ; l'angle trouvé à la main n'est
+pas mémorisé d'un chargement à l'autre.
 
 ### Volontairement laissé de côté
 
