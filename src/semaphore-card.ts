@@ -550,7 +550,11 @@ export class SemaphoreCard extends LitElement {
         // fitted one would freeze the card at the size of the window it was
         // last framed in, and the automatic re-frame on resize — the whole of
         // invariant 16 — would never run again.
-        view: this.scene.placedByUser ? this.scene.view.snapshot() : undefined,
+        //
+        // `restingView`, not the current one: while a camera is open the view
+        // is somewhere the card flew to, and remembering that would reopen the
+        // card on one lens for good.
+        view: this.scene.placedByUser ? this.scene.restingView : undefined,
         level: this.activeLevel,
         exploded: this.exploded,
       };

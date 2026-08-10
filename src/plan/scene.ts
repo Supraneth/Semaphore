@@ -8,7 +8,7 @@ import type {
   SemaphoreConfig,
 } from '../types';
 import { computeIsovist, type Segment } from '../fov';
-import { STATE_STYLES } from '../theme';
+import { MOTION, STATE_STYLES } from '../theme';
 import { Renderer } from './renderer';
 import { DEFAULT_VIEW, View, type ViewPreset } from './view';
 import { ViewControls } from './controls';
@@ -139,6 +139,8 @@ export class Scene {
 
     this.controls = new ViewControls(this.canvas, this.view, {
       onChange: () => {
+        // A hand on the scene outranks a flight it is in the middle of.
+        this.cutFlight();
         this.userFramed = true;
         this.noteInteraction();
         this.cb.onViewMoved?.();
@@ -171,6 +173,7 @@ export class Scene {
    * cannot be forgotten by one of them.
    */
   applyPreset(preset: ViewPreset): void {
+    this.cutFlight();
     this.view.yaw = preset.yaw;
     this.view.pitch = preset.pitch;
     this.view.refresh();
@@ -204,6 +207,9 @@ export class Scene {
    */
   frame(): void {
     if (!this.view.width || !this.view.height) return;
+    // Fitting places the view outright; a flight still running would drag it
+    // back off the building over the next half second.
+    this.cutFlight();
     this.framed = true;
     this.userFramed = false;
 
@@ -347,7 +353,7 @@ export class Scene {
   }
 
   /** Where the view stood before a focus flight, so leaving can undo it. */
-  private beforeFocus?: ReturnType<View['snapshot']>;
+  private beforeFocus?: Snapshot;
 
   focus(name: string | null): void {
     // Only the first focus records a return point: hopping straight from one
@@ -361,22 +367,105 @@ export class Scene {
       if (rt) {
         // Look along the lens: the map's heading matches the camera's, which
         // is the cheapest way to make "what am I looking at" obvious.
-        this.view.yaw = rt.config.azimuth;
-        this.view.pitch = 62;
-        this.view.center = [...rt.config.position] as Point;
-        this.view.zoom = Math.max(18, Math.min(90, 420 / Math.max(4, rt.config.range)));
-        this.view.refresh();
+        this.flyTo({
+          yaw: rt.config.azimuth,
+          pitch: 62,
+          center: [...rt.config.position] as Point,
+          zoom: Math.max(18, Math.min(90, 420 / Math.max(4, rt.config.range))),
+        });
       }
     } else if (this.beforeFocus) {
       // Leaving focus put the user wherever the last camera happened to point.
       // The overview they came from is the one thing they asked for.
-      Object.assign(this.view, this.beforeFocus, {
-        center: [...this.beforeFocus.center] as Point,
-      });
-      this.view.refresh();
+      this.flyTo(this.beforeFocus);
       this.beforeFocus = undefined;
     }
     this.noteInteraction();
+  }
+
+  /**
+   * The view the card should remember — the overview, even mid-flight.
+   *
+   * A focus is a place the card took you, not a place you chose, and it must
+   * never end up as the remembered view: the card would reopen on one camera's
+   * lens, `restoreView` would mark it user-placed so it never re-fits, and the
+   * overview would be gone for good. Both ordinary triggers hit this — the card
+   * being torn down while focused (a dashboard tab change, an edit), and a save
+   * still pending from a drag when a camera is opened.
+   */
+  get restingView(): Snapshot {
+    const resting = this.beforeFocus ?? this.view.snapshot();
+    return { ...resting, center: [...resting.center] as Point };
+  }
+
+  // ---- flights ------------------------------------------------------------
+
+  private flight?: { from: Snapshot; to: Snapshot; started: number };
+
+  /**
+   * Moves the camera there over `MOTION.flight`, rather than teleporting.
+   *
+   * Focus used to assign the view outright. From an overview at yaw 20 to a lens
+   * at 330 that is a 310-degree discontinuity in one frame — indistinguishable
+   * from the scene being scrambled, and it took the viewer's sense of which way
+   * the house faces with it. Interpolated, and turning the short way, the same
+   * change reads as the camera swinging round to look.
+   */
+  private flyTo(to: Snapshot): void {
+    // Anyone who asked the OS to stop motion gets the destination, not a ride.
+    if (this.reducedMotion) {
+      this.flight = undefined;
+      this.applyView(to);
+      this.invalidate();
+      return;
+    }
+    this.flight = { from: this.view.snapshot(), to, started: performance.now() };
+    this.invalidate();
+  }
+
+  private applyView(v: Snapshot): void {
+    this.view.yaw = v.yaw;
+    this.view.pitch = v.pitch;
+    this.view.zoom = v.zoom;
+    this.view.center = [...v.center] as Point;
+    this.view.refresh();
+  }
+
+  /** Abandons a flight in progress. Anything that places the view calls this. */
+  private cutFlight(): void {
+    this.flight = undefined;
+  }
+
+  private advanceFlight(now: number): void {
+    const flight = this.flight;
+    if (!flight) return;
+    const { from, to } = flight;
+    const t = Math.min(1, (now - flight.started) / MOTION.flight);
+    // `MOTION.ease` is cubic-bezier(0.22, 1, 0.36, 1), which is easeOutQuint —
+    // exactly this curve. One easing for the DOM and the canvas, so a panel
+    // arriving and the camera it belongs to land together.
+    const k = 1 - (1 - t) ** 5;
+
+    // The short way round: 20 to 330 is a 50-degree turn left, not 310 right.
+    const turn = (((to.yaw - from.yaw) % 360) + 540) % 360 - 180;
+    this.view.yaw = from.yaw + turn * k;
+    this.view.pitch = from.pitch + (to.pitch - from.pitch) * k;
+    // Zoom multiplies rather than adds: a linear ramp from 18 to 90 px/m spends
+    // most of its time close-up and arrives as a lurch.
+    this.view.zoom = from.zoom * (to.zoom / from.zoom) ** k;
+    this.view.center = [
+      from.center[0] + (to.center[0] - from.center[0]) * k,
+      from.center[1] + (to.center[1] - from.center[1]) * k,
+    ];
+    this.view.refresh();
+
+    if (t >= 1) {
+      // Land on the asked-for numbers, not on the last interpolated ones: the
+      // return from focus has to be the exact view it left, to the pixel.
+      this.applyView(to);
+      this.flight = undefined;
+    }
+    this.dirtyFrame = true;
   }
 
   noteInteraction(): void {
@@ -422,6 +511,8 @@ export class Scene {
       if (this.paused) return;
       const now = performance.now();
 
+      this.advanceFlight(now);
+
       const idleFor = now - this.lastInteraction;
       const resume = (this.config['orbit-resume'] ?? 6) * 1000;
       const speed = this.reducedMotion || this.editing ? 0 : this.config['orbit-speed'] ?? 0;
@@ -448,6 +539,9 @@ export class Scene {
 
   /** The only reasons to keep painting once nothing has changed. */
   private get animating(): boolean {
+    // A flight is the one animation that must run even under reduced motion's
+    // usual exclusions — except it never starts there, `flyTo` snaps instead.
+    if (this.flight) return true;
     if (this.orbiting) return true;
     if (this.reducedMotion) return false;
     if (this.frozenTime !== null) return false;
@@ -491,12 +585,9 @@ export class Scene {
    * reload ago. That is what stops the next resize from re-fitting it away, and
    * it stays theirs until they press "Cadrer".
    */
-  restoreView(saved: ReturnType<View['snapshot']>): void {
-    this.view.yaw = saved.yaw;
-    this.view.pitch = saved.pitch;
-    this.view.zoom = saved.zoom;
-    this.view.center = [...saved.center] as Point;
-    this.view.refresh();
+  restoreView(saved: Snapshot): void {
+    this.cutFlight();
+    this.applyView(saved);
     this.framed = true;
     this.userFramed = true;
     this.invalidate();
@@ -516,6 +607,8 @@ export class Scene {
     return { x, y };
   }
 }
+
+type Snapshot = ReturnType<View['snapshot']>;
 
 function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false;

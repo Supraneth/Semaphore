@@ -19,7 +19,7 @@ Complet et exécuté — mais jamais dans un vrai Home Assistant.
 Vérifié mécaniquement :
 
 - `tsc --noEmit` strict passe, `vite build` produit `dist/semaphore.js`
-  (45,6 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur.
+  (46,5 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur.
   Le verdict, le clavier, la feuille de raccourcis, la persistance, les bandeaux
   de santé et le rendu des ouvertures ont coûté 5,7 kB à eux tous).
 - **La carte se manipule** : glisser pivote, molette et pincement zooment, le
@@ -60,7 +60,17 @@ Vérifié mécaniquement :
 - **La vue survit au rechargement** : lacet, inclinaison, zoom et centre
   identiques au pixel près après un `reload`, niveau actif et éclatement inclus.
   **Cadrer** efface l'enregistrement, donc le recadrage automatique reprend aussi
-  après rechargement.
+  après rechargement. Et **ouvrir une caméra n'écrase pas la vue d'ensemble** :
+  reproduit d'abord — une sauvegarde pendant un focus stockait le lacet de
+  l'objectif (330° au lieu de 25°) et la carte rouvrait dessus pour toujours —
+  puis vérifié corrigé.
+- **Le vol vers une caméra prend le plus court chemin** : de 25° vers 330° la vue
+  descend par 0 et atterrit exactement sur la cible ; de 350° vers 135° elle
+  monte par 360. Vérifié en pilotant `advanceFlight` avec une horloge
+  synthétique, et `prefers-reduced-motion` reçoit bien la destination sans vol.
+  Ce que ce banc **ne peut pas** montrer : l'animation à l'écran — Chrome gèle
+  `requestAnimationFrame` dans un onglet en arrière-plan, ce qu'est tout onglet
+  piloté par CDP.
 - **Les dégradations se disent** : `FrigateBridge` publie ce qu'il reçoit
   vraiment (`mqtt`, `history`), et la carte affiche un bandeau plutôt que de
   faire semblant. Vérifié sur le banc, où l'API d'historique n'existe pas.
@@ -357,8 +367,32 @@ c'est probablement le changement qui a tort.
     efface l'enregistrement, parce que c'est précisément la demande de reprendre
     le cadrage automatique. La clé est dérivée de la scène décrite (niveaux et
     caméras), faute d'identifiant de carte dans une config Lovelace.
+    Et ce qu'on enregistre est `Scene.restingView`, **jamais la vue courante** :
+    un focus est un endroit où la carte vous a emmené, pas un endroit que vous
+    avez choisi. Enregistré, il rouvrait la carte sur l'objectif d'une caméra,
+    `restoreView` le marquait « placé par l'utilisateur » donc plus aucun
+    recadrage, et la vue d'ensemble était perdue pour de bon. Deux déclencheurs
+    ordinaires y menaient : la carte détruite pendant un focus
+    (`disconnectedCallback` → `saveNow`, c'est-à-dire un changement d'onglet de
+    tableau de bord), et une sauvegarde encore en attente au moment d'ouvrir une
+    caméra.
 
-30. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
+30. **On vole vers une caméra, on ne s'y téléporte pas.** `focus` affectait la
+    vue d'un coup : d'une vue d'ensemble à lacet 20 vers un objectif à 330, c'est
+    une discontinuité de 310° en une frame — impossible à distinguer d'une scène
+    qui part dans tous les sens, et le spectateur y perd le sens de l'orientation
+    de la maison. `flyTo` interpole sur `MOTION.flight`, **par le plus court
+    chemin** (`((Δ % 360) + 540) % 360 − 180`), zoom en multiplicatif, et atterrit
+    sur les nombres demandés et pas sur les derniers interpolés — le retour de
+    focus doit rendre exactement la vue d'avant. `MOTION.ease` est
+    `cubic-bezier(0.22, 1, 0.36, 1)`, c'est-à-dire easeOutQuint, donc
+    `1 − (1 − t)⁵` en JS : une seule courbe pour le DOM et le canvas. Tout ce qui
+    place la vue autrement (`frame`, `applyPreset`, `restoreView`, une main sur
+    la scène) coupe le vol en cours, sinon il ramène la vue sur ses pas pendant
+    une demi-seconde. `prefers-reduced-motion` reçoit la destination, pas le
+    trajet.
+
+31. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
     est dessiné comme une seule silhouette — objectif, puis le pourtour de
     l'isovist dans l'ordre, fermé. Une seule passe : cent triangles translucides
     partageant des arêtes se composeraient en bandes. Ne pas fabriquer une
