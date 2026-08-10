@@ -304,12 +304,16 @@ recadrage automatique — y compris au prochain chargement.
 
 ### Quand quelque chose manque
 
-Si le module MQTT n'est pas joignable, ou si l'historique Frigate ne répond pas,
-la carte le dit dans un bandeau au lieu de faire semblant. Les deux pannes sont
-non fatales par construction — le plan s'affiche quand même — et c'est
-exactement pourquoi elles doivent s'afficher : une carte qui a l'air de marcher
-et qui ne rapportera jamais rien est plus difficile à diagnostiquer qu'une carte
-en erreur.
+Si le module MQTT n'est pas joignable, la carte le dit dans un bandeau au lieu de
+faire semblant. La panne est non fatale par construction — le plan s'affiche
+quand même — et c'est exactement pourquoi elle doit s'afficher : une carte qui a
+l'air de marcher et qui ne rapportera jamais rien est plus difficile à
+diagnostiquer qu'une carte en erreur.
+
+L'historique Frigate, lui, ne dit rien quand il manque : aucune des deux routes
+qui y mènent n'est un contrat documenté, donc le repli sur les événements de la
+session est le cas ordinaire, pas une panne. Un bandeau permanent sur lequel on
+ne peut rien faire est un bandeau qu'on cesse de lire.
 
 ---
 

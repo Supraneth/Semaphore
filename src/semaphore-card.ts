@@ -896,12 +896,16 @@ export class SemaphoreCard extends LitElement {
   /**
    * What the card is not receiving.
    *
-   * Both of these degrade silently by design — without MQTT the scene still
-   * draws, it simply never lights a sector; without Frigate's event API the
-   * timeline still fills, but only from this session. A card that looks like it
-   * works and will never report anything is worse than one that says so, and
-   * the symptom on its own ("nothing ever happens at my house") is unusually
-   * hard to trace back to its cause.
+   * Only MQTT. Without it the scene still draws and simply never lights a
+   * sector, which is a card that looks like it works and will never report
+   * anything — worse than one that says so, and a symptom ("nothing ever
+   * happens at my house") that does not lead back to its cause on its own.
+   *
+   * A missing event history is deliberately *not* reported. Neither route to it
+   * is a documented Home Assistant contract, so on a normal install the fall
+   * back to the local buffer is the ordinary case rather than a fault — and a
+   * banner that is always there, that nobody can act on, is a banner people
+   * stop seeing. `bridge.health.history` still records it for anyone debugging.
    */
   private renderHealthNotices(): TemplateResult | typeof nothing {
     const health = this.health;
@@ -917,12 +921,6 @@ export class SemaphoreCard extends LitElement {
       notices.push(
         `L'abonnement à « ${this.config['topic-prefix'] ?? 'frigate'}/events » a échoué : ` +
           "le plan s'affiche, mais aucun secteur ne s'allumera.",
-      );
-    }
-    if (health.history === 'local') {
-      notices.push(
-        "L'historique Frigate est indisponible : la frise ne montre que les " +
-          'événements reçus depuis le chargement de cette page.',
       );
     }
     if (!notices.length) return nothing;

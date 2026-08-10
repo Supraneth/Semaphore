@@ -77,9 +77,10 @@ Vérifié mécaniquement :
   Ce que ce banc **ne peut pas** montrer : l'animation à l'écran — Chrome gèle
   `requestAnimationFrame` dans un onglet en arrière-plan, ce qu'est tout onglet
   piloté par CDP.
-- **Les dégradations se disent** : `FrigateBridge` publie ce qu'il reçoit
-  vraiment (`mqtt`, `history`), et la carte affiche un bandeau plutôt que de
-  faire semblant. Vérifié sur le banc, où l'API d'historique n'existe pas.
+- **Les dégradations se disent, celles qui sont des pannes** : `FrigateBridge`
+  publie ce qu'il reçoit vraiment (`mqtt`, `history`) ; seul `mqtt` donne un
+  bandeau. Vérifié sur le banc, où l'API d'historique n'existe pas et où la
+  carte reste donc silencieuse.
 - **Une ouverture reliée à un capteur se voit et se calcule** : la baie et la
   porte d'entrée du banc s'ouvrent et se ferment, l'aperture est peinte en rouge,
   et une porte `blocksSight` qui s'ouvre cesse de bloquer — occultants mesurés
@@ -372,12 +373,20 @@ c'est probablement le changement qui a tort.
     Un capteur `unavailable` compte pour fermé : une alerte fausse dans un outil
     de sécurité est ce qui fait cesser de le lire.
 
-27. **Ce que la carte ne reçoit pas, elle le dit.** MQTT injoignable et
-    historique Frigate indisponible sont deux dégradations non fatales *par
-    construction* — et c'est exactement pourquoi elles doivent s'afficher. Une
-    carte qui a l'air de marcher et qui ne rapportera jamais rien est pire qu'une
-    carte en erreur, et le symptôme (« il ne se passe jamais rien chez moi ») ne
-    remonte pas tout seul à sa cause.
+27. **Ce que la carte ne reçoit pas, elle le dit — quand c'est une panne.** MQTT
+    injoignable est une dégradation non fatale *par construction*, et c'est
+    exactement pourquoi elle doit s'afficher : une carte qui a l'air de marcher
+    et qui ne rapportera jamais rien est pire qu'une carte en erreur, et le
+    symptôme (« il ne se passe jamais rien chez moi ») ne remonte pas tout seul à
+    sa cause.
+    Le revers, et il a coûté un bandeau : **l'historique Frigate absent n'est pas
+    une panne.** Ni `frigate/events/get` ni le proxy HTTP ne sont des contrats
+    documentés, donc le repli sur le tampon local est le cas *ordinaire* sur une
+    install normale — le bandeau était donc permanent, sans action possible, et
+    un bandeau permanent est un bandeau qu'on cesse de voir, y compris quand il
+    dit quelque chose. `bridge.health.history` continue de l'enregistrer pour
+    qui débogue ; rien ne l'affiche. Ne rien signaler qu'on ne puisse ni réparer
+    ni ignorer.
 
 28. **Le clavier est branché sur la carte, pas sur la fenêtre.** La scène prend
     le focus (`tabindex`) et répond ; un écouteur global casserait les onze
