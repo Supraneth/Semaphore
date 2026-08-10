@@ -19,9 +19,9 @@ Complet et exécuté — mais jamais dans un vrai Home Assistant.
 Vérifié mécaniquement :
 
 - `tsc --noEmit` strict passe, `vite build` produit `dist/semaphore.js`
-  (47,8 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur.
-  Le verdict, le clavier, la feuille de raccourcis, la persistance, les bandeaux
-  de santé et le rendu des ouvertures ont coûté 5,7 kB à eux tous).
+  (58,9 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur.
+  Le fil d'événements, le mur d'images, l'armement et les fenêtres de frise ont
+  coûté 11 kB de plus ; c'est le prix d'être un poste et plus une visionneuse).
 - **La carte se manipule** : glisser pivote, molette et pincement zooment, le
   pincement ne fait pas tourner, et plus aucun préréglage ne s'attribue un angle
   trouvé à la main. Vérifié en pilotant de vrais événements souris et tactiles.
@@ -64,6 +64,35 @@ Vérifié mécaniquement :
   reproduit d'abord — une sauvegarde pendant un focus stockait le lacet de
   l'objectif (330° au lieu de 25°) et la carte rouvrait dessus pour toujours —
   puis vérifié corrigé.
+- **Trois vues, une à la fois** : `Plan · Direct · Événements`, en onglets, avec
+  la même forme à toutes les largeurs. La boucle rAF s'arrête sur les deux
+  autres onglets ; le plan n'est jamais démonté, seulement masqué, donc l'angle
+  survit au changement d'onglet. Vérifié à 1280 px et à 380 px de carte.
+- **Le fil d'événements est vérifié sur ce qu'il montre** : vignette, libellé,
+  compteur de regroupement, caméra, heure relative, heure, durée, pastille
+  « non lu », filtres Personnes / Véhicules / caméra, en-têtes de jour, et le
+  repli en carré coloré quand la vignette ne charge pas — ce que fait le banc,
+  qui n'a pas de proxy Frigate.
+- **Le regroupement ne s'emballe pas** : mesuré contre la portée réelle du
+  groupe et non contre « il est encore en cours ». Frigate laisse des pistes
+  ouvertes ; la première version, qui traitait un groupe vivant comme infini, a
+  réduit le fil à une ligne par caméra en trois minutes de banc.
+- **Le mur d'images** : une tuile par caméra, cadre coloré par l'état, hors
+  ligne estompée, et **une seule tuile en direct à la fois** — six
+  `ha-camera-stream` sont six transcodages. Les tuiles gardent le 16:9 plutôt
+  que de remplir le volet : un cadre caméra étiré est une image trompeuse.
+- **L'armement tourne de bout en bout** sur le banc : état lu, liste des
+  vulnérabilités (ouvertures ouvertes, caméras hors ligne) avec leurs noms
+  Home Assistant, champ de code quand la centrale en demande un, actions
+  filtrées par `supported_features`, délai de sortie (`arming`) affiché, et le
+  refus d'un mauvais code remonté dans la feuille.
+- **La frise se manipule** : fenêtres 15 min / 1 h / 6 h / 24 h, glisser pour se
+  déplacer, retour à « maintenant », graduations qui descendent à la minute et
+  **étiquettes accordées au pas** — un pas de 30 min étiqueté en heures
+  imprimait « 07 h 07 h 08 h 08 h ». Pas de zoom à la molette : la carte doit
+  rester dépassable au défilement (invariant 19).
+- **Contraste** : le texte quitte `slate` (3,2:1 sur l'encre) pour `slateText`
+  (6,1:1), au-dessus du seuil AA pour les 11 px où il servait.
 - **Ouvrir une caméra cadre ce qui est peint** : niveau entier plus cône, boîte
   projetée comparée au centre du canvas, sur les quatre caméras de la maison
   d'exemple — décentrage **0,0 px** en x comme en y, marges symétriques, 34 px
@@ -135,7 +164,13 @@ coûtait 310 kB gzip.
 | `src/fov.ts` | isovist avec occlusions |
 | `src/homography.ts` | DLT 4 points, bbox Frigate → position sur le plan |
 | `src/frigate.ts` | souscription MQTT, suivi des détections, URLs média, santé du lien |
-| `src/theme.ts` | palette carte marine, styles d'état, tempos |
+| `src/theme.ts` | palette carte marine, styles d'état, tempos, noms de labels |
+| `src/format.ts` | heures, durées, « il y a … » — partagés par les quatre vues |
+| `src/events.ts` | pliage des pistes en événements, filtres |
+| `src/alarm.ts` | lecture et commandes d'un `alarm_control_panel` |
+| `src/chrome-css.ts` | le chrome partagé par les trois éléments |
+| `src/semaphore-events.ts` | le fil d'événements, élément à part |
+| `src/semaphore-wall.ts` | le mur d'images, élément à part |
 | `src/plan/view.ts` | caméra 2.5D orthographique, `project` / `unproject` exacts, `VIEW_PRESETS` |
 | `src/plan/controls.ts` | pivoter, zoomer, déplacer hors édition — souris et tactile |
 | `src/plan/geometry.ts` | murs → faces et → occultants, ouvertures, aires |
@@ -429,7 +464,23 @@ c'est probablement le changement qui a tort.
     une demi-seconde. `prefers-reduced-motion` reçoit la destination, pas le
     trajet.
 
-31. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
+31. **Une seule tuile en direct à la fois.** `ha-camera-stream` ouvre une vraie
+    connexion : six tuiles, ce sont six transcodages sur la machine qui fait
+    tourner Home Assistant, et un tableau de bord qui fait fondre un Raspberry
+    Pi quand on ouvre un onglet est un tableau de bord qu'on désinstalle. Le mur
+    montre les mêmes instantanés que les chips jusqu'à ce qu'on demande. Et une
+    tuile garde le **16:9** plutôt que de remplir le volet : un cadre caméra
+    étiré est une image trompeuse, ce qu'une vue de sécurité n'a pas le droit
+    d'être.
+
+32. **Un groupe se mesure à sa portée, jamais à « il est encore en cours ».**
+    Frigate laisse des pistes ouvertes. Un groupe traité comme infini tant qu'un
+    membre est vivant avale tout ce qui suit sur cette caméra : le fil s'est
+    réduit à une ligne par caméra en trois minutes de banc. `reach` est le
+    dernier instant que le groupe est *connu* avoir atteint, et c'est contre lui
+    que l'écart se mesure.
+
+33. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
     est dessiné comme une seule silhouette — objectif, puis le pourtour de
     l'isovist dans l'ordre, fermé. Une seule passe : cent triangles translucides
     partageant des arêtes se composeraient en bandes. Ne pas fabriquer une
@@ -502,23 +553,30 @@ HA ne peut trancher. Chacun a un repli qui évite que l'échec soit fatal.
 
 ## Suite, par ordre de valeur
 
+Les chantiers 06 à 12 de l'audit d'interface sont faits. Restent les deux qui
+forment un projet à eux seuls, et ils sont dans cet ordre parce que le second
+dépend du premier.
+
 1. **Calibration 4 points dans l'éditeur.** Poser une caméra se fait à la
    souris, mais les correspondances image ↔ sol qui donnent les blips s'écrivent
    encore à la main. Il faut afficher le snapshot à côté du plan et cliquer
-   4 paires. Sans ça, pas de détections positionnées. C'est maintenant le seul
-   champ de la config qu'on ne peut pas produire à la souris — l'éditeur
-   autonome est l'endroit où le faire, puisqu'il peut lire une image du disque.
-2. **Calque de décalque complet.** `Underlay` est modélisé, rendu et sérialisé,
+   4 paires. Sans ça, pas de détections positionnées — et c'est le **verrou du
+   point 2**. C'est le seul champ de la config qu'on ne peut pas produire à la
+   souris ; l'éditeur autonome est l'endroit où le faire, puisqu'il peut lire une
+   image du disque et que la carte ne peut prendre qu'une URL.
+2. **Rejeu complet.** `homography.ts` calcule déjà la trajectoire au sol à chaque
+   frame suivie, et `prune()` l'efface douze secondes après la fin de la piste ;
+   l'événement qui revient de l'API Frigate n'a jamais eu de trajet. Il manque
+   une arête — conserver le `trail` à la fin de la piste — puis le rejeu du
+   trajet calé sur le clip. C'est ce que ni Frigate, ni Ring, ni Nest ne font.
+3. **Calque de décalque complet.** `Underlay` est modélisé, rendu et sérialisé,
    et `applyScale()` existe ; il manque l'entrée d'URL et le geste « tracer une
-   longueur connue » dans l'interface. Là encore l'éditeur autonome peut prendre
-   un fichier local là où la carte ne peut prendre qu'une URL.
-3. **Rejeu complet.** Le curseur de timeline gèle déjà le temps de la scène ; il
-   reste à rejouer les trajectoires historiques et à caler la vidéo dessus.
+   longueur connue » dans l'interface.
 4. **Éditeur Lovelace natif** (`getConfigElement`) pour écrire la config au lieu
    de copier du YAML.
 5. **Escaliers et trémies**, pour que deux niveaux se lisent comme un volume.
 6. **PTZ** : suivre la valeur de pan live plutôt que l'azimut fixe.
-7. **i18n** : les chaînes sont en français en dur dans `semaphore-card.ts`.
+7. **i18n** : les chaînes sont en français en dur dans les trois éléments.
 
 ## Défauts connus
 

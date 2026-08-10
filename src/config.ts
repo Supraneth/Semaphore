@@ -112,6 +112,38 @@ function ratio(value: unknown, where: string): string {
   );
 }
 
+/**
+ * An entity id, optionally of a required domain.
+ *
+ * Checking the domain catches the mistake people actually make — pasting the
+ * `binary_sensor` that *reports* the alarm instead of the panel that drives
+ * it — at config time, where it can be explained, rather than as a button that
+ * quietly does nothing.
+ */
+function entity(value: unknown, where: string, domain?: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !/^[a-z_]+\.[a-z0-9_]+$/.test(value)) {
+    return fail(`${where} : attendu un identifiant d'entité, reçu ${describe(value)}.`);
+  }
+  if (domain && !value.startsWith(`${domain}.`)) {
+    return fail(`${where} : attendu une entité du domaine \`${domain}\`, reçu « ${value} ».`);
+  }
+  return value;
+}
+
+const MODES = ['plan', 'live', 'events'] as const;
+
+/** Which pane the card opens on. Named, so a typo is a message and not a shrug. */
+function mode(value: unknown): SemaphoreConfig['default-mode'] {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !MODES.includes(value as (typeof MODES)[number])) {
+    return fail(
+      `\`default-mode\` : attendu ${MODES.join(', ')}, reçu ${describe(value)}.`,
+    );
+  }
+  return value as SemaphoreConfig['default-mode'];
+}
+
 let seq = 0;
 const uid = (prefix: string): string => `${prefix}-${++seq}`;
 
@@ -435,6 +467,15 @@ export function validateConfig(input: SemaphoreConfig): ValidationResult {
       'show-labels': bool(raw['show-labels'], true, '`show-labels`'),
       'floor-opacity': num(raw['floor-opacity'], 0.1, '`floor-opacity`', 0),
       'show-timeline': bool(raw['show-timeline'], true, '`show-timeline`'),
+      'show-modes': bool(raw['show-modes'], true, '`show-modes`'),
+      'alarm-entity': entity(raw['alarm-entity'], '`alarm-entity`', 'alarm_control_panel'),
+      'default-mode': mode(raw['default-mode']),
+      'group-gap-seconds': num(
+        raw['group-gap-seconds'],
+        120,
+        '`group-gap-seconds`',
+        0,
+      ),
       height: raw.height === undefined ? undefined : num(raw.height, 0, '`height`', 80),
       'max-height':
         raw['max-height'] === undefined

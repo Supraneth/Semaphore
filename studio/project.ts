@@ -48,6 +48,7 @@ export function sampleHouse(): SemaphoreConfig {
     grid: 0.5,
     'timeline-hours': 6,
     'orbit-speed': 0,
+    'alarm-entity': 'alarm_control_panel.maison',
     levels: [
       {
         id: 'rdc',

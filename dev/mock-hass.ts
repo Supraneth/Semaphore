@@ -122,7 +122,12 @@ export function createMockHass(options: MockOptions): any {
     states[entity] = {
       entity_id: entity,
       state: 'off',
-      attributes: { device_class: entity.includes('porte') ? 'door' : 'window' },
+      attributes: {
+        device_class: entity.includes('porte') ? 'door' : 'window',
+        // Home Assistant always has one; the pre-arm list reads it, and without
+        // it the sheet would show raw entity ids.
+        friendly_name: entity.includes('porte') ? "Porte d'entrée" : 'Baie du salon',
+      },
     };
     const toggle = (): void => {
       const current = states[entity] as { state: string };
@@ -131,6 +136,26 @@ export function createMockHass(options: MockOptions): any {
     };
     setTimeout(toggle, 3000 + Math.random() * 6000);
   }
+
+  /**
+   * An alarm panel that answers.
+   *
+   * Supports home, away and night — bits 1, 2 and 4 — and asks for a code, so
+   * the bench exercises the code path rather than only the happy one. `1234`
+   * is accepted and anything else is refused, which is what a real panel does
+   * and what the sheet's error line exists for.
+   */
+  const ALARM = 'alarm_control_panel.maison';
+  states[ALARM] = {
+    entity_id: ALARM,
+    state: 'disarmed',
+    attributes: {
+      friendly_name: 'Maison',
+      supported_features: 1 | 2 | 4,
+      code_format: 'number',
+      code_arm_required: false,
+    },
+  };
 
   return {
     states,
@@ -161,7 +186,32 @@ export function createMockHass(options: MockOptions): any {
     async callWS(): Promise<never> {
       throw new Error('unknown_command');
     },
-    callService: async () => undefined,
+    async callService(domain: string, service: string, data: any) {
+      if (domain !== 'alarm_control_panel') return undefined;
+      const current = states[ALARM] as any;
+      if (service === 'alarm_disarm' && data?.code !== '1234') {
+        throw new Error('Code incorrect.');
+      }
+      const target: Record<string, string> = {
+        alarm_disarm: 'disarmed',
+        alarm_arm_home: 'armed_home',
+        alarm_arm_night: 'armed_night',
+        alarm_arm_away: 'armed_away',
+      };
+      const next = target[service];
+      if (!next) throw new Error(`Service inconnu : ${service}`);
+      // Real panels pass through `arming` for the exit delay; the sheet has a
+      // busy state for exactly that, so the bench should produce one.
+      if (next !== 'disarmed') {
+        states[ALARM] = { ...current, state: 'arming' };
+        setTimeout(() => {
+          states[ALARM] = { ...current, state: next };
+        }, 3000);
+      } else {
+        states[ALARM] = { ...current, state: next };
+      }
+      return undefined;
+    },
   };
 }
 

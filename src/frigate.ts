@@ -274,6 +274,38 @@ export class FrigateBridge {
     return picture.includes('?') ? picture : `${picture}?v=1`;
   }
 
+  /**
+   * Pictures and clips for a past event.
+   *
+   * The Frigate integration mounts an unauthenticated notification proxy at
+   * `/api/frigate/<instance>/notifications/<event id>/…`, which is what its own
+   * mobile notifications use. It is the only route to an event's picture that
+   * does not need a token minted per request, and a feed of a hundred thumbnails
+   * cannot mint a hundred tokens.
+   *
+   * Undocumented, like everything else on this seam, so every consumer treats a
+   * failure as "no picture" rather than as an error — see the `@error` fallback
+   * on the feed's `<img>`. A thumbnail is 175 px wide from Frigate; the snapshot
+   * is the full frame with the box drawn on it.
+   */
+  private notificationUrl(eventId: string, file: string): string | undefined {
+    if (!eventId) return undefined;
+    const instance = this.options.instanceId ?? 'frigate';
+    return `/api/frigate/${instance}/notifications/${eventId}/${file}`;
+  }
+
+  eventThumbUrl(eventId: string): string | undefined {
+    return this.notificationUrl(eventId, 'thumbnail.jpg');
+  }
+
+  eventSnapshotUrl(eventId: string): string | undefined {
+    return this.notificationUrl(eventId, 'snapshot.jpg');
+  }
+
+  eventClipUrl(eventId: string): string | undefined {
+    return this.notificationUrl(eventId, 'clip.mp4');
+  }
+
   // ---- history ------------------------------------------------------------
 
   /**

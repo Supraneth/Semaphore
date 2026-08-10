@@ -9,6 +9,17 @@ import { FrigateBridge, type BridgeHealth } from './frigate';
 import { STATE_STYLES, labelCss, labelName, withAlpha } from './theme';
 import { styles } from './semaphore-card-css';
 import { DEFAULT_VIEW, VIEW_PRESETS, presetOf, type ViewPreset } from './plan/view';
+import { groupEvents, groupOf, type EventGroup } from './events';
+import {
+  actionsFor,
+  codeIsNumeric,
+  needsCode,
+  readAlarm,
+  type ArmAction,
+} from './alarm';
+import { agoLabel, clockLabel, durationLabel, hourLabel, spanOf } from './format';
+import './semaphore-events';
+import './semaphore-wall';
 
 /**
  * The card.
@@ -33,8 +44,45 @@ const THUMB_REFRESH_MS = 10_000;
 /** How far a chip may be pulled back onto the stage before it is simply gone. */
 const CHIP_CLAMP_PX = 44;
 
-/** Hour steps that keep an axis reading in round numbers. */
-const HOUR_STEPS = [1, 2, 3, 6, 12, 24];
+/**
+ * Steps that keep an axis reading in round numbers, in milliseconds.
+ *
+ * Minutes as well as hours, now that the window can be a quarter of an hour —
+ * an hour ladder on a fifteen-minute span produces one mark, or none.
+ */
+const MINUTE = 60_000;
+const STEPS_MS = [
+  MINUTE,
+  2 * MINUTE,
+  5 * MINUTE,
+  10 * MINUTE,
+  15 * MINUTE,
+  30 * MINUTE,
+  60 * MINUTE,
+  2 * 60 * MINUTE,
+  3 * 60 * MINUTE,
+  6 * 60 * MINUTE,
+  12 * 60 * MINUTE,
+  24 * 60 * MINUTE,
+];
+
+/** The four windows worth a button. */
+const WINDOWS = [
+  { label: '15 min', ms: 15 * MINUTE },
+  { label: '1 h', ms: 60 * MINUTE },
+  { label: '6 h', ms: 6 * 60 * MINUTE },
+  { label: '24 h', ms: 24 * 60 * MINUTE },
+];
+
+/**
+ * An axis mark.
+ *
+ * Driven by the *step*, never by the span: a six-hour window whose marks fall
+ * every thirty minutes printed "07 h 07 h 08 h 08 h" when the label was chosen
+ * from the span. Anything finer than an hour needs the minutes.
+ */
+const tickLabel = (t: number, step: number): string =>
+  step < 60 * MINUTE ? clockLabel(t) : hourLabel(t);
 /** Narrowest a labelled hour mark can sit next to the one before it. */
 const TICK_MIN_PX = 64;
 /** Room kept clear at the right for "maintenant". */
@@ -52,8 +100,27 @@ const ICON = {
   keys: svg`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M7 10h.01M11 10h.01M15 10h2M7 14h10"/></svg>`,
 } as const;
 
+/**
+ * The three things the card is for, one at a time.
+ *
+ * Not three cards, and not three panes side by side. Side by side is a layout
+ * that only exists above about 900 px, so it would have to be designed twice
+ * and the phone would get the worse half — and a phone is where a home
+ * dashboard is actually read. One pane at a time is the same shape at every
+ * width, and it is what lets each of the three have the whole card instead of a
+ * third of it.
+ */
+const MODES = [
+  { id: 'plan', label: 'Plan', key: 'p' },
+  { id: 'live', label: 'Direct', key: 'l' },
+  { id: 'events', label: 'Événements', key: 'e' },
+] as const;
+
+type Mode = (typeof MODES)[number]['id'];
+
 /** What the keyboard does, and the sheet that says so. */
 const SHORTCUTS: Array<[string, string]> = [
+  ['P L E', 'Plan · Direct · Événements'],
   ['1 – 9', 'Ouvrir la caméra n°…'],
   ['← →', 'Caméra précédente / suivante'],
   ['Échap', "Revenir à la vue d'ensemble"],
@@ -67,11 +134,15 @@ const SHORTCUTS: Array<[string, string]> = [
 const STORE_PREFIX = 'semaphore-card/v1';
 /** A drag fires dozens of view changes a second; the disk does not need them. */
 const SAVE_DEBOUNCE_MS = 500;
+/** Events that have been read, capped so the record cannot grow without end. */
+const MAX_SEEN = 400;
 
 interface SavedState {
   view?: { yaw: number; pitch: number; zoom: number; center: Point };
   level?: string;
   exploded?: boolean;
+  mode?: Mode;
+  seen?: string[];
 }
 
 @customElement('semaphore-card')
@@ -109,6 +180,14 @@ export class SemaphoreCard extends LitElement {
   /** Ids of the openings a sensor reports open. */
   @state() private openIds: ReadonlySet<string> = new Set();
   @state() private showHelp = false;
+  @state() private mode: Mode = 'plan';
+  @state() private showArm = false;
+  @state() private armCode = '';
+  @state() private armError = '';
+  /** Event groups already opened, so the feed can say what is new. */
+  @state() private seen: ReadonlySet<string> = new Set();
+  /** The group the feed and the panel agree is selected. */
+  @state() private selectedGroup: string | null = null;
 
   @query('.canvas') private canvasEl?: HTMLCanvasElement;
   @query('.stage') private stageEl?: HTMLElement;
@@ -123,6 +202,29 @@ export class SemaphoreCard extends LitElement {
   private io?: IntersectionObserver;
   private states = new Map<string, CameraState>();
   private saveTimer = 0;
+  /** True while the card is on screen; combined with the mode to pause the loop. */
+  private onScreen = true;
+
+  /**
+   * Detections folded into the events a person would recognise.
+   *
+   * Recomputed whenever the flat list changes rather than on every render: it
+   * is O(n log n) over a few hundred items and the card renders on a tick.
+   */
+  private groupCache: { source: Detection[]; groups: EventGroup[] } = {
+    source: [],
+    groups: [],
+  };
+
+  private get groups(): EventGroup[] {
+    if (this.groupCache.source !== this.events) {
+      this.groupCache = {
+        source: this.events,
+        groups: groupEvents(this.events, (this.config['group-gap-seconds'] ?? 120) * 1000),
+      };
+    }
+    return this.groupCache.groups;
+  }
 
   // ---- Home Assistant contract -------------------------------------------
 
@@ -131,6 +233,8 @@ export class SemaphoreCard extends LitElement {
     this.config = result.config;
     this.migrated = result.migrated;
     this.activeLevel = this.config.levels[0].id;
+    const wanted = this.config['default-mode'];
+    if (wanted && MODES.some((m) => m.id === wanted)) this.mode = wanted;
     const view = this.config.view;
     this.preset = view
       ? presetOf(view.yaw ?? DEFAULT_VIEW.yaw, view.pitch ?? DEFAULT_VIEW.pitch)
@@ -242,7 +346,8 @@ export class SemaphoreCard extends LitElement {
   private onVisibility = (): void => this.setActive(!document.hidden);
 
   private setActive(active: boolean): void {
-    this.scene?.setPaused(!active);
+    this.onScreen = active;
+    this.syncPaused();
     if (active && !this.thumbTimer) {
       this.thumbTimer = window.setInterval(() => {
         this.thumbNonce = Date.now();
@@ -481,6 +586,9 @@ export class SemaphoreCard extends LitElement {
   // ---- actions ------------------------------------------------------------
 
   private focusCamera(name: string): void {
+    // Opening a camera is a request to see where it is, so it is also a request
+    // for the plan — from the feed, from the wall, or from a digit key.
+    this.setMode('plan');
     this.focused = name;
     // Focusing flies to the lens's own heading, which is no preset's angle.
     this.preset = undefined;
@@ -491,6 +599,51 @@ export class SemaphoreCard extends LitElement {
     this.focused = null;
     this.selected = null;
     this.scene?.focus(null);
+  }
+
+  /**
+   * The render loop runs for the plan, and only when the plan is on screen.
+   *
+   * A wall of streams or a list of thumbnails has no use for a canvas being
+   * repainted behind it, and invariant 7 is about not painting without a
+   * reason. Being on another tab of the same card is exactly that.
+   */
+  private syncPaused(): void {
+    this.scene?.setPaused(!this.onScreen || this.mode !== 'plan');
+  }
+
+  private setMode(mode: Mode): void {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    this.syncPaused();
+    this.saveSoon();
+  }
+
+  /**
+   * One click, three answers.
+   *
+   * This is the whole reason the feed lives inside the card rather than beside
+   * it: picking an event lights its camera's sector, puts the plan on the
+   * storey it happened on, and opens the stream — and on a plan, unlike in any
+   * other camera product, *where* is a thing that can be pointed at.
+   */
+  private selectGroup(group: EventGroup): void {
+    this.selectedGroup = group.id;
+    this.markSeen([group.id]);
+    // The newest member carries the picture and the clip; the panel wants the
+    // detection, not the fold.
+    this.selected = group.members[0] ?? null;
+    this.setMode('plan');
+    this.focusCamera(group.camera);
+  }
+
+  private markSeen(ids: readonly string[]): void {
+    const next = new Set(this.seen);
+    for (const id of ids) next.add(id);
+    if (next.size === this.seen.size) return;
+    // Oldest first out: the record is a courtesy, not an archive.
+    this.seen = next.size > MAX_SEEN ? new Set([...next].slice(-MAX_SEEN)) : next;
+    this.saveSoon();
   }
 
   private selectLevel(id: string): void {
@@ -562,6 +715,8 @@ export class SemaphoreCard extends LitElement {
         view: this.scene.placedByUser ? this.scene.restingView : undefined,
         level: this.scene.restingLevel,
         exploded: this.exploded,
+        mode: this.mode,
+        seen: [...this.seen],
       };
       localStorage.setItem(this.storeKey, JSON.stringify(saved));
     } catch {
@@ -595,6 +750,13 @@ export class SemaphoreCard extends LitElement {
       this.exploded = true;
       this.scene.setExploded(3.2);
     }
+    if (saved.mode && MODES.some((m) => m.id === saved.mode)) {
+      this.mode = saved.mode;
+      this.syncPaused();
+    }
+    if (Array.isArray(saved.seen)) {
+      this.seen = new Set(saved.seen.filter((id) => typeof id === 'string').slice(-MAX_SEEN));
+    }
 
     const view = saved.view;
     if (
@@ -623,7 +785,8 @@ export class SemaphoreCard extends LitElement {
     // Escape belongs to the card even from inside a control — it is how you
     // leave, and leaving must never depend on where focus landed.
     if (ev.key === 'Escape') {
-      if (this.showHelp) this.showHelp = false;
+      if (this.showArm) this.showArm = false;
+      else if (this.showHelp) this.showHelp = false;
       else if (this.focused) this.unfocus();
       else return;
       ev.preventDefault();
@@ -638,8 +801,12 @@ export class SemaphoreCard extends LitElement {
     const cameras = this.config.cameras;
     const key = ev.key;
 
+    const mode = MODES.find((m) => m.key === key.toLowerCase());
+
     if (key === '?' || (key === '/' && ev.shiftKey)) {
       this.showHelp = !this.showHelp;
+    } else if (mode) {
+      this.setMode(mode.id);
     } else if (key >= '1' && key <= '9') {
       const cam = cameras[Number(key) - 1];
       if (!cam) return;
@@ -667,8 +834,47 @@ export class SemaphoreCard extends LitElement {
     ev.preventDefault();
   };
 
+  /**
+   * The window the timeline is showing.
+   *
+   * `timeline-hours` used to be both the buffer's depth and the axis's width,
+   * which meant the axis was an installation setting: a five-second event on a
+   * six-hour span is 0.02 % of the width, and no amount of care in the drawing
+   * fixes an axis that cannot be changed. The buffer keeps its config value;
+   * the window is now something you hold in your hand.
+   */
+  @state() private windowSpan: number | null = null;
+  /** Right edge of the window. Null means live — pinned to now. */
+  @state() private windowEnd: number | null = null;
+
   private get span(): number {
+    return this.windowSpan ?? (this.config['timeline-hours'] ?? 24) * 3600_000;
+  }
+
+  /** Right edge, in ms. Follows the tick while live. */
+  private get until(): number {
+    return this.windowEnd ?? this.now;
+  }
+
+  private get live(): boolean {
+    return this.windowEnd === null;
+  }
+
+  /** How far back the buffer itself reaches; panning may not leave it. */
+  private get horizon(): number {
     return (this.config['timeline-hours'] ?? 24) * 3600_000;
+  }
+
+  private setWindow(span: number, end: number | null): void {
+    const oldest = this.now - this.horizon;
+    this.windowSpan = Math.max(60_000, Math.min(this.horizon, span));
+    if (end === null) {
+      this.windowEnd = null;
+      return;
+    }
+    // Never past now, never before the buffer starts: a window showing time the
+    // card has no data for is a window that looks broken.
+    this.windowEnd = Math.max(oldest + this.windowSpan, Math.min(this.now, end));
   }
 
   /** Follows the pointer across the tracks and reads the time under it. */
@@ -677,14 +883,57 @@ export class SemaphoreCard extends LitElement {
     if (!track) return;
     const rect = track.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-    this.cursor = this.now - this.span * (1 - ratio);
+
+    if (this.panFrom !== null && ev.buttons) {
+      // Dragging moves the window, not the cursor: a pixel is `span / width`
+      // milliseconds, so the instant under the finger stays under the finger.
+      const perPixel = this.span / Math.max(1, rect.width);
+      const moved = (this.panFrom - ev.clientX) * perPixel;
+      this.panFrom = ev.clientX;
+      this.setWindow(this.span, this.until + moved);
+      return;
+    }
+    this.cursor = this.until - this.span * (1 - ratio);
   }
+
+  private startPan(ev: PointerEvent): void {
+    if (ev.button !== 0) return;
+    // A mark is a button and owns its own click; panning from one would make
+    // every event impossible to open.
+    const target = ev.composedPath()[0];
+    if (target instanceof HTMLElement && target.closest('button')) return;
+    this.panFrom = ev.clientX;
+    (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
+  }
+
+  private endPan(ev: PointerEvent): void {
+    this.panFrom = null;
+    const el = ev.currentTarget as HTMLElement;
+    if (el.hasPointerCapture?.(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+  }
+
+  private panFrom: number | null = null;
 
   private endHover(): void {
     this.cursor = null;
   }
 
+  /**
+   * A mark on the timeline is a member of a group.
+   *
+   * Routed through the group so the feed, the panel and the timeline never
+   * disagree about what is selected — three highlights pointing at three
+   * different things is how a card stops being trusted.
+   */
   private selectEvent(det: Detection): void {
+    const group = groupOf(this.groups, det);
+    if (group) {
+      this.selectGroup(group);
+      // The mark that was clicked is more specific than the fold's newest
+      // member, and it is the one whose time the panel should show.
+      this.selected = det;
+      return;
+    }
     this.selected = det;
     this.focusCamera(det.camera);
   }
@@ -695,12 +944,18 @@ export class SemaphoreCard extends LitElement {
     if (!this.config) return html``;
     return html`
       <ha-card>
-        ${this.renderVerdict()}
+        <div class="verdict-row">${this.renderVerdict()}</div>
         ${this.migrated ? this.renderMigrationNotice() : nothing}
         ${this.renderHealthNotices()}
+        ${this.renderModes()}
+        <!-- The stage is never unmounted, only hidden: the canvas, the scene
+             and the view live in it, and tearing them down to switch tab would
+             throw away the angle the user is standing at. Hidden it measures
+             0 x 0, which the guard in Scene.init already treats as "not now". -->
         <div
           class="stage ${this.focused ? 'focused' : ''} ${this.autoAspect ? 'auto-aspect' : ''}"
           style=${this.stageStyle()}
+          ?hidden=${this.mode !== 'plan'}
           tabindex="0"
           aria-label="Plan de la maison. Tapez ? pour les raccourcis clavier."
           @keydown=${this.onKey}
@@ -711,10 +966,101 @@ export class SemaphoreCard extends LitElement {
             ${this.renderViewControls()} ${this.renderPanel()} ${this.renderHelp()}
           </div>
         </div>
-        ${this.renderTimeline()}
+        ${this.mode === 'plan' ? this.renderTimeline() : this.renderPane()}
         ${this.error ? html`<div class="empty error">${this.error}</div>` : nothing}
+        ${this.renderArmSheet()}
       </ha-card>
     `;
+  }
+
+  /**
+   * The three tabs.
+   *
+   * Hidden when there is only ever going to be one answer: a config with no
+   * cameras has no live view and no events, and a tab strip offering two empty
+   * rooms is worse than no tab strip.
+   */
+  private renderModes(): TemplateResult | typeof nothing {
+    if (!this.config.cameras.length) return nothing;
+    if (this.config['show-modes'] === false) return nothing;
+
+    const unseen = this.groups.filter((g) => !this.seen.has(g.id)).length;
+    return html`
+      <div class="modes" role="tablist" aria-label="Vue">
+        <div class="segmented">
+          ${MODES.map(
+            (m) => html`<button
+              role="tab"
+              aria-selected=${this.mode === m.id}
+              aria-pressed=${this.mode === m.id}
+              title="${m.label} (${m.key.toUpperCase()})"
+              @click=${() => this.setMode(m.id)}
+            >
+              ${m.label}${m.id === 'events' && unseen
+                ? html`<span class="badge">${unseen > 99 ? '99+' : unseen}</span>`
+                : nothing}
+            </button>`,
+          )}
+        </div>
+      </div>
+    `;
+  }
+
+  /** Whichever of the two non-plan panes is showing. */
+  private renderPane(): TemplateResult {
+    const style = this.paneStyle();
+    if (this.mode === 'events') {
+      return html`
+        <semaphore-events
+          class="pane ${this.autoAspect ? 'auto-aspect' : ''}"
+          style=${style}
+          .groups=${this.groups}
+          .cameras=${this.config.cameras}
+          .thumb=${(id: string) => this.bridge?.eventThumbUrl(id)}
+          .selected=${this.selectedGroup}
+          .seen=${this.seen}
+          .now=${this.now}
+          .hours=${this.config['timeline-hours'] ?? 24}
+          @event-select=${(ev: CustomEvent<EventGroup>) => this.selectGroup(ev.detail)}
+          @events-seen=${(ev: CustomEvent<string[]>) => this.markSeen(ev.detail)}
+        ></semaphore-events>
+      `;
+    }
+    return html`
+      <semaphore-wall
+        class="pane ${this.autoAspect ? 'auto-aspect' : ''}"
+        style=${style}
+        .cameras=${this.config.cameras}
+        .states=${this.states}
+        .hass=${this.hass}
+        .stamp=${this.thumbNonce}
+        .preview=${(cam: CameraConfig) => this.bridge?.livePreviewUrl(cam)}
+        .entityOf=${(cam: CameraConfig) => this.bridge?.cameraEntity(cam)}
+      ></semaphore-wall>
+    `;
+  }
+
+  /**
+   * A pane takes the box the stage would have taken.
+   *
+   * Same three cases as `stageStyle`, so switching tab never changes the height
+   * of the card — a dashboard whose rows reflow because you looked at a list is
+   * a dashboard that feels broken.
+   */
+  private paneStyle(): string {
+    const rows = (this.config as Record<string, any>).grid_options?.rows;
+    if (typeof rows === 'number') return 'flex:1 1 auto;min-height:200px';
+    const cap = this.config['max-height'];
+    const max = cap ? `${cap}px` : '74vh';
+    if (this.config.height) return `height:${this.config.height}px;max-height:${max}`;
+    if (this.config['aspect-ratio']) {
+      return `aspect-ratio:${this.config['aspect-ratio']};max-height:${max}`;
+    }
+    // No shape asked for: the stylesheet gives the pane the same shape it gives
+    // the stage, from the card's own width. An inline aspect-ratio here would
+    // pin 16/10 on a phone, where the stage is 4/3 — the card would change
+    // height every time you switched tab.
+    return `max-height:${max}`;
   }
 
   private renderMigrationNotice(): TemplateResult {
@@ -837,6 +1183,167 @@ export class SemaphoreCard extends LitElement {
             : nothing}
         </span>
       </button>
+      ${this.renderArmButton()}
+    `;
+  }
+
+  // ---- arming -------------------------------------------------------------
+
+  private get alarmEntity(): any {
+    const id = this.config['alarm-entity'];
+    return id ? this.hass?.states?.[id] : undefined;
+  }
+
+  /**
+   * The arm control, docked to the right of the verdict.
+   *
+   * Its own button rather than a third tag on the verdict, because the verdict
+   * is a readout and this is the one thing on the card that changes the state
+   * of the house. Those must not be the same control.
+   */
+  private renderArmButton(): TemplateResult | typeof nothing {
+    const reading = readAlarm(this.alarmEntity);
+    if (!reading) return nothing;
+    const css = STATE_STYLES[reading.tone].css;
+    return html`
+      <button
+        class="arm ${reading.tone}"
+        style="color:${css}"
+        title="Alarme — ${reading.label}"
+        aria-label="Alarme — ${reading.label}. Ouvrir les commandes."
+        aria-expanded=${this.showArm}
+        @click=${() => this.openArm()}
+      >
+        <span class="pip"></span>
+        <span class="what">${reading.label}</span>
+      </button>
+    `;
+  }
+
+  private openArm(): void {
+    this.armCode = '';
+    this.armError = '';
+    this.showArm = !this.showArm;
+  }
+
+  /**
+   * What would be wrong with arming right now.
+   *
+   * The whole reason a plan beats a list: "2 ouvertures" is a number, and the
+   * red apertures behind this sheet are the answer. Open doors and dead cameras
+   * are the two things that turn an armed house into a false alarm at 3 a.m.
+   */
+  private vulnerabilities(): Array<{ text: string; tone: CameraState }> {
+    const out: Array<{ text: string; tone: CameraState }> = [];
+    for (const level of this.config.levels) {
+      for (const wall of level.walls ?? []) {
+        for (const o of wall.openings ?? []) {
+          if (!o.entity || !this.openIds.has(o.id)) continue;
+          const friendly = this.hass?.states?.[o.entity]?.attributes?.friendly_name;
+          out.push({ text: `${friendly ?? o.entity} — ouverte`, tone: 'alert' });
+        }
+      }
+    }
+    for (const cam of this.config.cameras) {
+      if (this.states.get(cam.name) !== 'offline') continue;
+      out.push({ text: `${cam.label ?? cam.name} — hors ligne`, tone: 'offline' });
+    }
+    return out;
+  }
+
+  private async runArm(action: ArmAction): Promise<void> {
+    const id = this.config['alarm-entity'];
+    if (!id || !this.hass?.callService) return;
+    const stateObj = this.alarmEntity;
+    if (needsCode(stateObj, action) && !this.armCode) {
+      this.armError = 'Cette centrale demande un code.';
+      return;
+    }
+    try {
+      await this.hass.callService('alarm_control_panel', action.service, {
+        entity_id: id,
+        ...(this.armCode ? { code: this.armCode } : {}),
+      });
+      this.showArm = false;
+      this.armCode = '';
+      this.armError = '';
+    } catch (err) {
+      // Home Assistant rejects a wrong code with an error rather than a state
+      // change, so without this the sheet just sits there looking ignored.
+      this.armError =
+        err instanceof Error ? err.message : "La centrale a refusé la commande.";
+    }
+  }
+
+  private renderArmSheet(): TemplateResult | typeof nothing {
+    const stateObj = this.alarmEntity;
+    const reading = readAlarm(stateObj);
+    if (!this.showArm || !reading) return nothing;
+
+    const actions = actionsFor(stateObj);
+    const risks = this.vulnerabilities();
+    const numeric = codeIsNumeric(stateObj);
+    const wantsCode = actions.some((a) => needsCode(stateObj, a));
+
+    return html`
+      <div class="sheet-scrim" @click=${() => (this.showArm = false)}>
+        <div
+          class="sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Commandes de l'alarme"
+          @click=${(ev: Event) => ev.stopPropagation()}
+        >
+          <header>
+            <span class="pip" style="color:${STATE_STYLES[reading.tone].css}"></span>
+            <span class="title">${reading.label}</span>
+            <button
+              class="icon"
+              title="Fermer"
+              aria-label="Fermer"
+              @click=${() => (this.showArm = false)}
+            >${ICON.close}</button>
+          </header>
+
+          ${risks.length
+            ? html`<ul class="risks">
+                ${risks.map(
+                  (r) => html`<li style="color:${STATE_STYLES[r.tone].css}">
+                    <span class="pip"></span><span>${r.text}</span>
+                  </li>`,
+                )}
+              </ul>`
+            : html`<p class="ok">Tout est fermé et toutes les caméras répondent.</p>`}
+
+          ${wantsCode
+            ? html`<input
+                class="code"
+                type="password"
+                inputmode=${numeric ? 'numeric' : 'text'}
+                autocomplete="off"
+                placeholder="Code"
+                aria-label="Code de la centrale"
+                .value=${this.armCode}
+                @input=${(ev: Event) => (this.armCode = (ev.target as HTMLInputElement).value)}
+              />`
+            : nothing}
+
+          ${this.armError ? html`<p class="err">${this.armError}</p>` : nothing}
+
+          <div class="actions">
+            ${actions.map(
+              (a) => html`<button
+                class="act ${a.id === 'disarm' ? 'off' : ''}"
+                ?disabled=${reading.busy}
+                @click=${() => this.runArm(a)}
+              >${a.label}</button>`,
+            )}
+          </div>
+          ${reading.busy
+            ? html`<p class="ok">Changement d'état en cours…</p>`
+            : nothing}
+        </div>
+      </div>
     `;
   }
 
@@ -1075,23 +1582,30 @@ export class SemaphoreCard extends LitElement {
     if (this.config['show-timeline'] === false) return nothing;
 
     const span = this.span;
-    const now = this.now;
-    const from = now - span;
+    const from = this.until - span;
     const place = (t: number): number => ((t - from) / span) * 100;
+    const { step, marks } = this.ticks();
 
     return html`
       <div
         class="timeline"
         @pointermove=${this.hover}
+        @pointerdown=${this.startPan}
+        @pointerup=${this.endPan}
+        @pointercancel=${this.endPan}
         @pointerleave=${this.endHover}
       >
+        ${this.renderWindows()}
+        <div class="plot">
         <div class="axis">
           <span class="track-label"></span>
           <div class="tracks" ${ref((el) => this.watchTimeline(el))}>
-            ${this.ticks().map(
-              (t) => html`<span class="tick" style="left:${place(t)}%">${hourLabel(t)}</span>`,
+            ${marks.map(
+              (t) => html`<span class="tick" style="left:${place(t)}%">${tickLabel(t, step)}</span>`,
             )}
-            <span class="tick now" style="left:100%">maintenant</span>
+            ${this.live
+              ? html`<span class="tick now" style="left:100%">maintenant</span>`
+              : nothing}
           </div>
         </div>
 
@@ -1106,6 +1620,7 @@ export class SemaphoreCard extends LitElement {
             </div>`
           : nothing}
 
+        </div>
         ${this.renderLegend()}
       </div>
     `;
@@ -1120,7 +1635,7 @@ export class SemaphoreCard extends LitElement {
           <div class="lane"></div>
           ${marks.map((m) => {
             const start = place(m.startTime);
-            const end = place(m.endTime ?? this.now);
+            const end = place(m.endTime ?? this.until);
             if (end < 0 || start > 100) return nothing;
             const left = Math.max(0, start);
             return html`<button
@@ -1136,20 +1651,34 @@ export class SemaphoreCard extends LitElement {
     `;
   }
 
-  /** What is in the window, and what it was. Empty is worth saying out loud. */
+  /**
+   * What is in the window, and what it was.
+   *
+   * Counted over the window rather than over the buffer: panning back to a
+   * quiet quarter of an hour used to leave four empty lanes and a legend
+   * cheerfully reporting the day's totals, which reads as a card that has
+   * stopped working.
+   */
   private renderLegend(): TemplateResult {
-    if (!this.events.length) {
+    const from = this.until - this.span;
+    const inWindow = this.events.filter(
+      (e) => (e.endTime ?? this.until) >= from && e.startTime <= this.until,
+    );
+
+    if (!inWindow.length) {
       return html`<p class="legend quiet">
-        Aucun événement sur les ${this.config['timeline-hours'] ?? 24} dernières heures.
+        ${this.events.length
+          ? 'Rien sur cette fenêtre.'
+          : `Aucun événement sur les ${this.config['timeline-hours'] ?? 24} dernières heures.`}
       </p>`;
     }
     const counts = new Map<string, number>();
-    for (const e of this.events) counts.set(e.label, (counts.get(e.label) ?? 0) + 1);
+    for (const e of inWindow) counts.set(e.label, (counts.get(e.label) ?? 0) + 1);
     return html`
       <p class="legend">
         ${[...counts].map(
           ([label, n]) => html`<span class="key">
-            <i style="background:${labelCss(label)}"></i>${label} × ${n}
+            <i style="background:${labelCss(label)}"></i>${labelName(label)} × ${n}
           </span>`,
         )}
       </p>
@@ -1167,23 +1696,54 @@ export class SemaphoreCard extends LitElement {
    * measured track, an hour ladder that keeps the marks round, and a right-hand
    * margin wide enough for the word that sits there.
    */
-  private ticks(): number[] {
-    const hours = this.config['timeline-hours'] ?? 24;
+  private ticks(): { step: number; marks: number[] } {
     const track = this.trackWidth;
     const room = Math.max(1, Math.floor(track / TICK_MIN_PX));
-    const step = HOUR_STEPS.find((s) => hours / s <= room) ?? HOUR_STEPS[HOUR_STEPS.length - 1];
+    const span = this.span;
+    // Minutes matter now that the window can be a quarter of an hour: an hour
+    // ladder on a 15-minute window produces one mark, or none.
+    const step =
+      STEPS_MS.find((s) => span / s <= room) ?? STEPS_MS[STEPS_MS.length - 1];
 
     // "maintenant" is anchored to the right edge; anything under it reads as a
-    // second label for the same instant.
-    const reserved = this.span * (NOW_LABEL_PX / track);
+    // second label for the same instant. Only while live — panned back, the
+    // right edge is an ordinary time and deserves its own mark.
+    const reserved = this.live ? span * (NOW_LABEL_PX / track) : 0;
 
-    const out: number[] = [];
-    const top = new Date(this.now);
-    top.setMinutes(0, 0, 0);
-    for (let t = top.getTime(); t > this.now - this.span; t -= step * 3600_000) {
-      if (this.now - t > reserved) out.push(t);
+    const until = this.until;
+    const marks: number[] = [];
+    // Round down to the step so marks land on round times whatever the window.
+    for (let t = Math.floor(until / step) * step; t > until - span; t -= step) {
+      if (until - t > reserved) marks.push(t);
     }
-    return out;
+    return { step, marks };
+  }
+
+  /**
+   * The window presets, plus the way back to live.
+   *
+   * Four spans and a "maintenant": a slider would be more expressive and would
+   * mean nobody ever lands on a round number. Anything finer is what the wheel
+   * and the drag are for.
+   */
+  private renderWindows(): TemplateResult {
+    return html`
+      <div class="windows">
+        <div class="segmented">
+          ${WINDOWS.map(
+            (w) => html`<button
+              aria-pressed=${Math.abs(this.span - w.ms) < 1000}
+              @click=${() => this.setWindow(w.ms, null)}
+            >${w.label}</button>`,
+          )}
+        </div>
+        ${!this.live
+          ? html`<button class="back" @click=${() => this.setWindow(this.span, null)}>
+              Revenir à maintenant
+            </button>`
+          : nothing}
+      </div>
+    `;
   }
 
   /**
@@ -1217,41 +1777,6 @@ export class SemaphoreCard extends LitElement {
     });
     this.timelineObserver.observe(el);
   }
-}
-
-const two = (n: number): string => String(n).padStart(2, '0');
-const clockLabel = (t: number): string => {
-  const d = new Date(t);
-  return `${two(d.getHours())}:${two(d.getMinutes())}`;
-};
-const hourLabel = (t: number): string => `${two(new Date(t).getHours())} h`;
-
-/** A span, in the coarsest unit that still says something. */
-function durationLabel(ms: number): string {
-  const seconds = Math.max(1, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds} s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    const rest = minutes % 60;
-    return rest ? `${hours} h ${two(rest)}` : `${hours} h`;
-  }
-  return `${Math.round(hours / 24)} j`;
-}
-
-const spanOf = (det: Detection): number => (det.endTime ?? Date.now()) - det.startTime;
-
-/**
- * How long ago, as a phrase.
- *
- * "il y a 3 s" for something that is happening right now reads as a stopwatch
- * rather than as news, and it changes on every tick — which on a line carrying
- * `aria-live` means a screen reader announcing the same event ten times.
- */
-function agoLabel(t: number, now: number): string {
-  const delta = now - t;
-  return delta < 45_000 ? "à l'instant" : `il y a ${durationLabel(delta)}`;
 }
 
 (window as any).customCards = (window as any).customCards ?? [];

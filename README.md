@@ -80,7 +80,7 @@ réglage d'inclinaison.
 
 Une maison fait quelques centaines de polygones. Le GPU n'apportait rien et
 coûtait le texte net, le hit-testing simple, et 310 kB de MapLibre. Le bundle
-complet fait **38 kB gzip**, sans autre dépendance que Lit.
+complet fait **59 kB gzip**, sans autre dépendance que Lit.
 
 L'éditeur n'en fait pas partie. Une carte de tableau de bord qui embarque aussi
 un outil de dessin fait payer à chaque chargement, à tout le monde, un outil
@@ -237,7 +237,75 @@ Un événement de cinq secondes sur six heures fait 0,02 % de la largeur : les
 repères ont une largeur minimale, sinon les événements courts — c'est-à-dire la
 plupart — seraient invisibles.
 
+**La fenêtre se règle** : 15 min / 1 h / 6 h / 24 h, glisser pour se déplacer
+dans le temps, « Revenir à maintenant » pour reprendre le direct. Les
+graduations descendent à la minute quand la fenêtre le demande. `timeline-hours`
+ne règle plus que la profondeur du tampon, pas la largeur de l'axe.
+
+Pas de zoom à la molette : une carte qu'on ne peut pas dépasser en faisant
+défiler est un piège sur un téléphone.
+
 `show-timeline: false` la retire complètement.
+
+---
+
+## Trois vues
+
+En haut de la carte, trois onglets. Une vue à la fois, la même forme sur un
+écran de 1 400 px et sur un téléphone — le côte-à-côte n'existe qu'au-dessus de
+900 px, il faudrait le dessiner deux fois et c'est le téléphone qui hériterait
+de la moins bonne moitié.
+
+| Onglet | Ce qu'il montre |
+|---|---|
+| **Plan** | la scène 2.5D, les secteurs, les blips, la frise en dessous |
+| **Direct** | le mur d'images : une tuile par caméra |
+| **Événements** | le fil, plus récent en haut |
+
+`P`, `L`, `E` au clavier. `default-mode: events` choisit celui d'ouverture,
+`show-modes: false` retire la barre.
+
+### Le fil d'événements
+
+Une vignette, ce qui a été vu, la caméra, il y a combien de temps, l'heure, la
+durée. Les pistes qui se suivent de près sur une même caméra sont **repliées en
+un seul événement** avec un compteur : un facteur qui remonte l'allée est perdu
+derrière la haie et repris trois fois, et un fil qui liste les huit pistes est
+un fil que personne ne fait défiler deux fois. `group-gap-seconds: 120` par
+défaut.
+
+Filtres Personnes / Véhicules, filtre par caméra, et une pastille sur les
+événements pas encore ouverts — avec le compteur reporté sur l'onglet, parce
+que l'intérêt d'un non-lu est d'être vu pendant qu'on regarde autre chose.
+
+**Ouvrir un événement fait trois choses à la fois** : la carte passe au plan,
+vole vers la caméra concernée — en changeant d'étage si besoin — et allume son
+secteur. C'est la raison pour laquelle le fil vit dans la carte et pas à côté.
+
+### Le mur d'images
+
+Une tuile par caméra, cadrée de la couleur de son état : rouge s'il y a une
+détection, jaune pour du mouvement, estompée hors ligne. Les tuiles montrent
+l'instantané que les chips utilisent déjà ; **cliquer en ouvre le direct, une
+seule à la fois**. Six flux, ce sont six transcodages sur la machine qui fait
+tourner Home Assistant.
+
+---
+
+## L'alarme
+
+```yaml
+alarm-entity: alarm_control_panel.maison
+```
+
+L'état s'affiche à droite de la ligne de verdict, et le bouton ouvre les
+commandes. Seules les actions que votre centrale déclare sont proposées, un
+champ de code apparaît si elle en demande un, et le délai de sortie s'affiche.
+
+Au-dessus des boutons, **ce qui cloche avant d'armer** : les ouvertures ouvertes,
+nommées, et les caméras qui ne répondent pas. C'est la liste qui évite la fausse
+alarme de trois heures du matin — et derrière la feuille, le plan montre
+*laquelle* des fenêtres.
 
 ---
 
@@ -324,6 +392,10 @@ ne peut rien faire est un bandeau qu'on cesse de lire.
 | `height: 420` | hauteur de la scène en pixels |
 | `aspect-ratio: "4/3"` | forme de la scène quand aucune hauteur n'est donnée. Défaut `16/10` |
 | `max-height: 500` | plafond en pixels. Défaut : 74 % de la hauteur de l'écran |
+| `default-mode: events` | onglet d'ouverture : `plan`, `live` ou `events` |
+| `show-modes: false` | retire la barre d'onglets |
+| `group-gap-seconds: 120` | au-delà de quoi deux pistes ne sont plus le même événement |
+| `alarm-entity: …` | un `alarm_control_panel` à lire et à commander |
 
 Dans un tableau de bord en **sections**, rien de tout cela n'est nécessaire :
 la carte déclare ses dimensions à Home Assistant, apparaît avec des poignées de
@@ -552,7 +624,9 @@ fatal — voir `CLAUDE.md`.
 
 **Défauts connus** : les chips de caméra peuvent recouvrir les libellés de pièce
 (deux calques, aucune détection de collision) ; un capteur d'ouverture
-`unavailable` compte pour fermé et ne se signale pas.
+`unavailable` compte pour fermé et ne se signale pas ; les vignettes du fil
+passent par le proxy de notification de l'intégration Frigate, qui n'est pas un
+contrat documenté — sans lui, une pastille colorée remplace l'image.
 
 ### Volontairement laissé de côté
 

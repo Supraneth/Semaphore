@@ -171,7 +171,27 @@ export interface SemaphoreConfig {
   'max-height'?: number;
   /** Show the detection timeline under the scene. Default true. */
   'show-timeline'?: boolean;
+  /** Which of Plan / Direct / Événements the card opens on. Default `plan`. */
+  'default-mode'?: 'plan' | 'live' | 'events';
+  /** Offer the three tabs at all. Default true. */
+  'show-modes'?: boolean;
+  /**
+   * How close two tracks on one camera must be to count as one event.
+   *
+   * Default 120 s. A postman walking up the drive is picked up, lost behind the
+   * hedge and picked up again — eight tracks for one visit, and a feed listing
+   * all eight is a feed nobody scrolls twice.
+   */
+  'group-gap-seconds'?: number;
   view?: ViewConfig;
+  /**
+   * An `alarm_control_panel` to read and drive.
+   *
+   * Optional: plenty of houses have cameras and no alarm. When it is absent the
+   * card simply never mentions arming rather than showing a control that cannot
+   * do anything.
+   */
+  'alarm-entity'?: string;
   'topic-prefix'?: string;
   'instance-id'?: string;
   'alert-labels'?: string[];

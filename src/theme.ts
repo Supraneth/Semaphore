@@ -21,8 +21,18 @@ export const CHART = {
   sectorRed: '#D9503C',
   /** Degraded feed: the light is lit but not to be trusted. */
   sectorGreen: '#2F9E6B',
-  /** Off air. */
+  /** Off air. A sector fill and a border — never text. */
   slate: '#5B7285',
+  /**
+   * The same slate, lifted until it can be read.
+   *
+   * `slate` on `ink` is about 3.2:1, which is under the 4.5:1 that 11 px text
+   * needs — and 11 px is exactly the size it was being used at, on the track
+   * labels, the legend and the panel's meta line. This one is 6.1:1. The
+   * darker value stays for the things that are not text: an offline sector, a
+   * hairline, an empty lane.
+   */
+  slateText: '#8FA3B4',
 
   /** Deep chart blue — halos, strokes, the ground under everything. */
   ink: '#0C2233',

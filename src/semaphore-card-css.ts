@@ -20,7 +20,7 @@ const ink = unsafeCSS(CHART.ink);
 const parchment = unsafeCSS(CHART.parchment);
 const white = unsafeCSS(CHART.sectorWhite);
 const red = unsafeCSS(CHART.sectorRed);
-const slate = unsafeCSS(CHART.slate);
+const slate = unsafeCSS(CHART.slateText);
 const tap = unsafeCSS(`${MOTION.tap}ms`);
 const panel = unsafeCSS(`${MOTION.panel}ms`);
 const ease = unsafeCSS(MOTION.ease);
@@ -44,6 +44,7 @@ export const styles = css`
   }
 
   ha-card {
+    position: relative;
     overflow: hidden;
     padding: 0;
     height: 100%;
@@ -54,6 +55,241 @@ export const styles = css`
        answer to it, and an element cannot query its own container. */
     container-type: inline-size;
     container-name: card;
+  }
+
+  /* The state dot, wherever one is needed. Sized once: it appears in the
+     verdict, the arm control, the chips, the panel and the pre-arm list, and
+     four of those used to define it for themselves. */
+  .pip {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* ---- verdict row and arming ------------------------------------------- */
+
+  /* The readout and the one control that changes the state of the house, side
+     by side but never the same button. */
+  .verdict-row {
+    display: flex;
+    align-items: stretch;
+    background-color: var(--semaphore-ink);
+    border-bottom: 1px solid ${glassEdge};
+  }
+  .verdict-row .verdict {
+    border-bottom: none;
+  }
+
+  .arm {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 7px;
+    padding: 0 14px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    background: transparent;
+    border: none;
+    border-left: 1px solid ${glassEdge};
+    cursor: pointer;
+    transition: background ${tap} ${ease};
+  }
+  .arm:hover {
+    background: ${glassEdge};
+  }
+  .arm:focus-visible {
+    outline: 2px solid ${white};
+    outline-offset: -3px;
+  }
+  .arm.alert .pip {
+    animation: pulse 1.6s ${ease} infinite;
+  }
+
+  /* A modal over the whole card, not over the stage: the alarm is reachable
+     from every tab, and the stage is hidden on two of the three. */
+  .sheet-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: grid;
+    place-items: center;
+    padding: 14px;
+    box-sizing: border-box;
+    background: ${unsafeCSS(withAlpha(CHART.ink, 0.74))};
+    backdrop-filter: blur(4px);
+    animation: rise ${panel} ${ease} both;
+  }
+
+  .sheet {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(340px, 100%);
+    max-height: 100%;
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 14px;
+    border-radius: var(--semaphore-radius);
+    background: ${glassBgSolid};
+    border: 1px solid ${glassEdge};
+    box-shadow: 0 8px 28px ${unsafeCSS(withAlpha(CHART.ink, 0.55))};
+  }
+  .sheet header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--semaphore-parchment);
+  }
+  .sheet header .title {
+    flex: 1;
+    font-weight: 600;
+  }
+  .sheet header button.icon {
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  /* What is wrong before you arm. This is the list that stops the 3 a.m. false
+     alarm, and on this card the plan behind it says *which* window. */
+  .sheet .risks {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 12px;
+  }
+  .sheet .risks li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sheet .ok {
+    margin: 0;
+    font-size: 12px;
+    color: ${slate};
+  }
+  .sheet .err {
+    margin: 0;
+    font-size: 12px;
+    color: ${red};
+  }
+
+  .sheet .code {
+    font: inherit;
+    font-size: 14px;
+    letter-spacing: 0.3em;
+    text-align: center;
+    color: var(--semaphore-parchment);
+    background: ${unsafeCSS(withAlpha(CHART.ink, 0.6))};
+    border: 1px solid ${glassEdge};
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .sheet .code:focus-visible {
+    outline: 2px solid ${white};
+    outline-offset: 2px;
+  }
+
+  .sheet .actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
+  }
+  .sheet .act {
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 11px 8px;
+    border-radius: 8px;
+    color: var(--semaphore-ink);
+    background: ${white};
+    border: 1px solid ${white};
+    cursor: pointer;
+  }
+  /* Disarming is the way back, not another way forward. */
+  .sheet .act.off {
+    color: var(--semaphore-parchment);
+    background: transparent;
+    border-color: ${glassEdgeLit};
+  }
+  .sheet .act[disabled] {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .sheet .act:focus-visible {
+    outline: 2px solid ${white};
+    outline-offset: 2px;
+  }
+
+  /* ---- modes ------------------------------------------------------------ */
+
+  /* The tab strip sits between the verdict and whichever pane is showing, so
+     the reading order is: what is happening, then where you are looking. */
+  .modes {
+    display: flex;
+    justify-content: center;
+    padding: 8px 10px;
+    background: var(--semaphore-ink);
+    border-bottom: 1px solid ${glassEdge};
+  }
+  .modes .segmented {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .modes .segmented::-webkit-scrollbar {
+    display: none;
+  }
+  .modes button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Unread events. On the tab rather than in the feed, because the whole point
+     is to be seen while looking at something else. */
+  .modes .badge {
+    min-width: 16px;
+    padding: 2px 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--semaphore-ink);
+    background: ${red};
+  }
+  .modes button[aria-pressed='true'] .badge {
+    background: var(--semaphore-ink);
+    color: ${white};
+  }
+
+  /* A pane takes the same box the stage would have, so switching tab never
+     changes the height of the card. */
+  .pane {
+    display: block;
+    width: 100%;
+    /* A feed three rows tall is not a feed, and a wall showing one tile is not
+       a wall. Below this the pane is not worth the tab that opens it. */
+    min-height: 300px;
+    overflow: hidden;
+  }
+  .pane.auto-aspect {
+    aspect-ratio: 16 / 10;
+  }
+
+  /* The hidden attribute has to beat the inline flex/aspect-ratio the stage carries. */
+  .stage[hidden] {
+    display: none !important;
   }
 
   /* Height and shape are set inline by stageStyle(): a dashboard row count, an
@@ -621,6 +857,56 @@ export const styles = css`
     font-size: 11px;
   }
 
+  /* The window controls. Small, above the axis, out of the way of the tracks
+     they govern — and the way back to live only exists once you have left it. */
+  .timeline .windows {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 8px;
+    padding-left: var(--label-w);
+    margin-left: var(--gap);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .timeline .windows::-webkit-scrollbar {
+    display: none;
+  }
+  .timeline .windows .segmented {
+    background: ${unsafeCSS(withAlpha(CHART.slate, 0.16))};
+    border-color: ${unsafeCSS(withAlpha(CHART.slate, 0.3))};
+    backdrop-filter: none;
+  }
+  .timeline .windows .segmented button {
+    color: var(--secondary-text-color, ${slate});
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+  .timeline .windows .segmented button[aria-pressed='true'] {
+    background: ${white};
+    color: ${ink};
+  }
+  .timeline .windows .back {
+    font: inherit;
+    font-size: 11px;
+    color: ${ink};
+    background: ${white};
+    border: none;
+    border-radius: 999px;
+    padding: 5px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .timeline .windows button:focus-visible {
+    outline: 2px solid ${white};
+    outline-offset: 2px;
+  }
+
+  /* Sideways drags the window; the page keeps the vertical, as on the plan. */
+  .timeline {
+    touch-action: pan-y;
+  }
+
   .timeline .axis,
   .timeline .track {
     display: grid;
@@ -668,7 +954,7 @@ export const styles = css`
     left: 0;
     right: 0;
     border-radius: 4px;
-    background: ${unsafeCSS(withAlpha(CHART.slate, 0.22))};
+    background: ${unsafeCSS(withAlpha(CHART.slate, 0.28))};
   }
 
   .timeline .mark {
@@ -696,10 +982,16 @@ export const styles = css`
     box-shadow: 0 0 0 1px var(--card-background-color, ${ink});
   }
 
+  /* The axis, the tracks and the scrub share a box, so the scrub spans exactly
+     the plot and not the window controls that sit above it. */
+  .timeline .plot {
+    position: relative;
+  }
+
   .timeline .scrub {
     position: absolute;
-    top: 8px;
-    bottom: 30px;
+    top: 0;
+    bottom: 0;
     width: 1px;
     background: ${white};
     pointer-events: none;
@@ -780,7 +1072,8 @@ export const styles = css`
     :host {
       --semaphore-inset: 8px;
     }
-    .stage.auto-aspect {
+    .stage.auto-aspect,
+    .pane.auto-aspect {
       aspect-ratio: 4 / 3;
     }
     .segmented button {
