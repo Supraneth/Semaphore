@@ -264,6 +264,11 @@ export class SemaphoreCard extends LitElement {
         onFrame: () => this.positionChips(),
         onIdleChange: () => undefined,
         // Turning the scene by hand means no preset describes it any more.
+        // Focusing a camera on another storey switches to it; the segmented
+        // control has to say so, and the chips have to stop dimming.
+        onLevelChange: (id: string) => {
+          this.activeLevel = id;
+        },
         onViewMoved: () => {
           this.saveSoon();
           if (this.preset) {
@@ -555,7 +560,7 @@ export class SemaphoreCard extends LitElement {
         // is somewhere the card flew to, and remembering that would reopen the
         // card on one lens for good.
         view: this.scene.placedByUser ? this.scene.restingView : undefined,
-        level: this.activeLevel,
+        level: this.scene.restingLevel,
         exploded: this.exploded,
       };
       localStorage.setItem(this.storeKey, JSON.stringify(saved));

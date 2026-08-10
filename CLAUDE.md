@@ -19,7 +19,7 @@ Complet et exécuté — mais jamais dans un vrai Home Assistant.
 Vérifié mécaniquement :
 
 - `tsc --noEmit` strict passe, `vite build` produit `dist/semaphore.js`
-  (46,5 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur.
+  (47,8 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur.
   Le verdict, le clavier, la feuille de raccourcis, la persistance, les bandeaux
   de santé et le rendu des ouvertures ont coûté 5,7 kB à eux tous).
 - **La carte se manipule** : glisser pivote, molette et pincement zooment, le
@@ -64,6 +64,12 @@ Vérifié mécaniquement :
   reproduit d'abord — une sauvegarde pendant un focus stockait le lacet de
   l'objectif (330° au lieu de 25°) et la carte rouvrait dessus pour toujours —
   puis vérifié corrigé.
+- **Ouvrir une caméra cadre ce qui est peint** : niveau entier plus cône, boîte
+  projetée comparée au centre du canvas, sur les quatre caméras de la maison
+  d'exemple — décentrage **0,0 px** en x comme en y, marges symétriques, 34 px
+  de garde respectés. Avant : jusqu'à −256 px et une couverture coupée par le
+  bord haut. Une caméra d'un autre étage fait passer la carte à cet étage, et
+  sortir du focus rend l'étage **et** la vue, à l'identique.
 - **Le vol vers une caméra prend le plus court chemin** : de 25° vers 330° la vue
   descend par 0 et atterrit exactement sur la cible ; de 350° vers 135° elle
   monte par 360. Vérifié en pilotant `advanceFlight` avec une horloge
@@ -242,6 +248,18 @@ c'est probablement le changement qui a tort.
       préréglages, et les deux autres débordaient des deux bords.
     Corollaire : **changer de niveau recadre** quand les niveaux sont empilés,
     sinon l'étage demandé est dessiné là où le précédent avait été cadré.
+    Corollaire, et il a été manqué pendant longtemps : **le focus est un cadrage
+    comme un autre**. `focus` posait le centre du canvas sur les *pieds* de la
+    caméra et prenait un zoom arbitraire (`420 / portée`) — les deux erreurs de
+    cet invariant, refaites à l'identique. Mesuré : jusqu'à 256 px de décentrage
+    vertical et une couverture **coupée par le bord haut**, 209 px
+    horizontalement. Le focus passe donc par un `View` d'essai qu'on `fit`, puis
+    par `fitProjected`, qui mesure la boîte **projetée** et corrige dessus :
+    `View.fit` centre la boîte du monde, ce qui n'est le centre de la boîte à
+    l'écran que pour une forme symétrique — vrai d'une maison rectangulaire,
+    faux d'un isovist, qui est un éventail. Et ce qu'on cadre est **le niveau
+    entier plus le cône**, parce que c'est ce que le renderer peint : cadrer la
+    seule couverture garantissait que le reste du plan sorte du cadre.
 
 16. **Tout changement de pitch, d'éclatement ou de taille recadre.** Aplatir une
     vue à 45° rend la scène 40 % plus haute à l'écran ; séparer les étages y
@@ -267,6 +285,14 @@ c'est probablement le changement qui a tort.
     d'inclinaison seul : il permettrait de demander la 3D et de ne rien obtenir.
     Le plan, lui, doit rester dans l'axe, sans quoi la grille cesse d'être une
     règle.
+    Corollaire pour le focus : **on ne peut pas prendre le cap de la caméra tel
+    quel**. Les caméras se posent d'équerre sur les murs, donc les azimuts
+    tombent sur les axes en permanence — la caméra du palier de la maison
+    d'exemple regarde plein sud, et son focus se lisait comme un mur plat.
+    `offAxis` décale du minimum nécessaire (15°) et **ne touche pas** un cap qui
+    dégage déjà : regarder dans l'axe de l'objectif est le but, on n'y renonce
+    que du strict nécessaire. Sur la maison d'exemple, trois caméras sur quatre
+    gardent leur azimut exact.
 
 18. **La maçonnerie est opaque ; l'alpha ne représente jamais la matière.** Une
     face de mur translucide laisse voir le sol et la couverture au travers et la
@@ -375,7 +401,9 @@ c'est probablement le changement qui a tort.
     ordinaires y menaient : la carte détruite pendant un focus
     (`disconnectedCallback` → `saveNow`, c'est-à-dire un changement d'onglet de
     tableau de bord), et une sauvegarde encore en attente au moment d'ouvrir une
-    caméra.
+    caméra. Même chose pour l'étage : ouvrir une caméra de l'étage **change de
+    niveau**, et ce changement appartient au focus, pas à l'utilisateur — d'où
+    `restingLevel` à côté de `restingView`. Sortir du focus rend les deux.
 
 30. **On vole vers une caméra, on ne s'y téléporte pas.** `focus` affectait la
     vue d'un coup : d'une vue d'ensemble à lacet 20 vers un objectif à 330, c'est

@@ -12,7 +12,25 @@ import { MOTION, STATE_STYLES } from '../theme';
 import { Renderer } from './renderer';
 import { DEFAULT_VIEW, View, type ViewPreset } from './view';
 import { ViewControls } from './controls';
-import { allPoints, occludersFor } from './geometry';
+import {
+  DEFAULT_MOUNT_HEIGHT,
+  DEFAULT_WALL_HEIGHT,
+  allPoints,
+  occludersFor,
+} from './geometry';
+
+/** Focus tilts to a reading that shows the cone as a solid. */
+const FOCUS_PITCH = 62;
+/**
+ * Breathing room around the coverage, in **pixels**.
+ *
+ * Metres are the right unit for a margin around a building, whose size on screen
+ * is what is being decided. Here the zoom is the outcome, so the only meaningful
+ * statement of "not glued to the edge" is a number of pixels.
+ */
+const FOCUS_MARGIN_PX = 34;
+/** How far a focus heading must sit from a grid axis to read as a volume. */
+const FOCUS_MIN_OFF_AXIS = 15;
 
 /**
  * Orchestration: view, runtimes, isovists, and the render loop.
@@ -28,6 +46,8 @@ export interface SceneCallbacks {
   onIdleChange: (idle: boolean) => void;
   /** The user turned or zoomed the scene themselves. */
   onViewMoved?: () => void;
+  /** The scene changed storey on its own — focusing a camera on another one. */
+  onLevelChange?: (id: string) => void;
 }
 
 export class Scene {
@@ -332,6 +352,18 @@ export class Scene {
     this.invalidate();
   }
 
+  /**
+   * Switches storey without reframing — the caller is about to place the view
+   * itself. `setActiveLevel` is the user-facing door and reframes; this is the
+   * one a focus goes through, and it tells the card so its control agrees.
+   */
+  private showLevel(id: string): void {
+    if (!id || this.activeLevel === id) return;
+    if (!this.config.levels.some((l) => l.id === id)) return;
+    this.activeLevel = id;
+    this.cb.onLevelChange?.(id);
+  }
+
   setActiveLevel(id: string): void {
     if (this.activeLevel === id) return;
     this.activeLevel = id;
@@ -354,33 +386,104 @@ export class Scene {
 
   /** Where the view stood before a focus flight, so leaving can undo it. */
   private beforeFocus?: Snapshot;
+  /** And which storey was on, since focusing can change it. */
+  private beforeFocusLevel?: string;
 
   focus(name: string | null): void {
     // Only the first focus records a return point: hopping straight from one
     // camera to another must still come back to the overview, not to the
     // previous camera's flight.
-    if (name && !this.focusCamera) this.beforeFocus = this.view.snapshot();
+    if (name && !this.focusCamera) {
+      this.beforeFocus = this.view.snapshot();
+      this.beforeFocusLevel = this.activeLevel;
+    }
     this.focusCamera = name;
 
     if (name) {
       const rt = this.runtimes.get(name);
       if (rt) {
-        // Look along the lens: the map's heading matches the camera's, which
-        // is the cheapest way to make "what am I looking at" obvious.
-        this.flyTo({
-          yaw: rt.config.azimuth,
-          pitch: 62,
-          center: [...rt.config.position] as Point,
-          zoom: Math.max(18, Math.min(90, 420 / Math.max(4, rt.config.range))),
-        });
+        // Stacked, only the active storey is drawn — so opening a camera on
+        // another one framed a floor that was not being painted, and left an
+        // empty grid with the real storey pushed off the bottom. It was already
+        // meaningless before the framing changed: `placedCameras` skips a camera
+        // whose storey is hidden, so there was no cone to look at either.
+        this.showLevel(rt.config.level ?? this.config.levels[0]?.id ?? this.activeLevel);
+        // The isovist is the thing being framed, so it has to exist first.
+        this.refreshIsovists();
+        this.flyTo(this.focusView(rt));
       }
     } else if (this.beforeFocus) {
+      if (this.beforeFocusLevel) this.showLevel(this.beforeFocusLevel);
+      this.beforeFocusLevel = undefined;
       // Leaving focus put the user wherever the last camera happened to point.
       // The overview they came from is the one thing they asked for.
       this.flyTo(this.beforeFocus);
       this.beforeFocus = undefined;
     }
     this.noteInteraction();
+  }
+
+  /**
+   * Where a focus should land.
+   *
+   * Not "put the camera at the centre of the canvas". That drops the canvas
+   * centre on the lens's *feet*, and at a 62° pitch everything painted stands
+   * above its ground position: the storey's own elevation, plus 2.5 m of wall,
+   * plus the mast. The building was pushed up and out of the frame, and a
+   * camera sitting on an outside wall — where cameras sit — put half the view
+   * on the empty ground outside the house. Invariant 15 applies here exactly as
+   * it does to `frame()`: fit what is painted, over the height range it is
+   * painted at, measured on the screen's axes and not the world's.
+   *
+   * What a focus is *about* is the coverage, so the isovist is what gets
+   * fitted — and it already carries the lens as its apex. Unlike `frame()` the
+   * range runs up to the mast: there the mast is an annotation on a building
+   * and would drag the building off the bottom, here it is the subject.
+   *
+   * Fitted on a scratch `View` so the live one is untouched — we are flying to
+   * this, not jumping to it, and `View.fit` mutates whatever it is given.
+   */
+  private focusView(rt: CameraRuntime): Snapshot {
+    const cam = rt.config;
+    const level = this.levelOf(cam);
+    const index = Math.max(0, this.config.levels.indexOf(level));
+    const base = (level?.elevation ?? 0) + this.explode * index;
+    const mount = cam.height ?? DEFAULT_MOUNT_HEIGHT;
+
+    const yaw = offAxis(cam.azimuth, FOCUS_MIN_OFF_AXIS);
+    const probe = new View({ yaw, pitch: FOCUS_PITCH });
+    probe.resize(this.view.width, this.view.height);
+
+    // Before the canvas has been measured `fit` is a silent no-op, so there is
+    // nothing better to do than point at the camera and keep the zoom.
+    if (!this.view.width || !this.view.height) {
+      return { yaw, pitch: FOCUS_PITCH, zoom: this.view.zoom, center: [...cam.position] as Point };
+    }
+
+    // What is painted during a focus is the whole storey *and* the cone, so
+    // that is what gets framed. Fitting the coverage alone guaranteed the rest
+    // of the plan left the frame — which is the complaint restated, not fixed.
+    const coverage: Point[] =
+      rt.isovist.length >= 3
+        ? rt.isovist
+        : // No coverage to speak of: a box the size of the camera's reach, so
+          // the fit has something with an extent rather than a single point.
+          [
+            [cam.position[0] - cam.range, cam.position[1] - cam.range],
+            [cam.position[0] + cam.range, cam.position[1] + cam.range],
+          ];
+    const points = allPoints([level], coverage);
+
+    const top = base + Math.max(level?.wallHeight ?? DEFAULT_WALL_HEIGHT, mount);
+    probe.fit(points, 0.5, base, top);
+    // `fit` centres the world-space bounding box, which is the projected centre
+    // only for a shape symmetric about it — true enough of a rectangular house,
+    // false of an isovist, which is a fan. Cuisine landed 84 px off. Measuring
+    // the projected box and correcting on it costs two passes and is exact:
+    // orthographic, so scaling the zoom scales that box about the view centre
+    // and a pan moves it by the same number of pixels.
+    fitProjected(probe, points, base, top, FOCUS_MARGIN_PX);
+    return probe.snapshot();
   }
 
   /**
@@ -394,8 +497,21 @@ export class Scene {
    * still pending from a drag when a camera is opened.
    */
   get restingView(): Snapshot {
-    const resting = this.beforeFocus ?? this.view.snapshot();
+    // Focused: the view it will come back to. Unfocused but still flying home:
+    // the destination, not the frame it happens to be passing through.
+    const resting = this.beforeFocus ?? this.flight?.to ?? this.view.snapshot();
     return { ...resting, center: [...resting.center] as Point };
+  }
+
+  /**
+   * The storey the card should remember, for the same reason as `restingView`.
+   *
+   * Focusing a camera upstairs switches storey, and that switch belongs to the
+   * focus, not to the user. Stored, the card reopened on a floor nobody asked
+   * for.
+   */
+  get restingLevel(): string {
+    return this.beforeFocusLevel ?? this.activeLevel;
   }
 
   // ---- flights ------------------------------------------------------------
@@ -609,6 +725,78 @@ export class Scene {
 }
 
 type Snapshot = ReturnType<View['snapshot']>;
+
+/**
+ * Nudges a heading off the grid axes, by the smallest amount that works.
+ *
+ * Invariant 17, applied to focus. At a yaw that is a multiple of 90 every wall
+ * parallel to it is seen exactly edge-on, and a rectangular storey at a 62°
+ * pitch collapses into a flat elevation — the height is drawn and none of it is
+ * visible. Cameras get mounted square to walls, so their azimuths land on those
+ * axes constantly: the sample house's landing camera looks due south, and its
+ * focus read as a blank wall.
+ *
+ * A heading already clear of the axes is returned untouched — the point of
+ * matching the lens is that you look along it, and that should be given up by
+ * as few degrees as possible.
+ */
+function offAxis(yaw: number, minimum: number): number {
+  const off = ((yaw % 90) + 90) % 90;
+  if (off >= minimum && off <= 90 - minimum) return yaw;
+  // Whichever side of the axis is nearer, so the lens heading is barely moved.
+  return off < minimum ? yaw + (minimum - off) : yaw - (off - (90 - minimum));
+}
+
+/**
+ * Sizes and centres a view on the screen box its points actually occupy.
+ *
+ * `View.fit` reasons in world space and corrects for height analytically, which
+ * is right for a building and approximate for anything whose extremes are not
+ * symmetric about its bounding box — an isovist fan under yaw, most of all.
+ * This measures instead. Two passes and no iteration: the projection is
+ * orthographic, so scaling the zoom scales the projected box about the view
+ * centre exactly, and panning translates it pixel for pixel.
+ */
+function fitProjected(
+  view: View,
+  points: Point[],
+  zMin: number,
+  zMax: number,
+  marginPx: number,
+): void {
+  const measure = (): { minX: number; maxX: number; minY: number; maxY: number } => {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of points) {
+      for (const z of [zMin, zMax]) {
+        const [x, y] = view.projectPoint(p, z);
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    return { minX, maxX, minY, maxY };
+  };
+
+  const first = measure();
+  if (!Number.isFinite(first.minX)) return;
+
+  const room = (span: number, box: number): number => Math.max(1, span - marginPx * 2) / Math.max(1, box);
+  view.zoom *= Math.min(
+    room(view.width, first.maxX - first.minX),
+    room(view.height, first.maxY - first.minY),
+  );
+  view.refresh();
+
+  const scaled = measure();
+  view.panBy(
+    view.width / 2 - (scaled.minX + scaled.maxX) / 2,
+    view.height / 2 - (scaled.minY + scaled.maxY) / 2,
+  );
+}
 
 function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false;
