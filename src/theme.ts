@@ -137,6 +137,29 @@ export function labelCss(label: string): string {
 }
 
 /**
+ * A Frigate label, in the language the rest of the card speaks.
+ *
+ * The verdict line is a sentence someone reads at a glance from across the
+ * room; `person — Entrée` makes them parse it. Anything Frigate emits that is
+ * not in this list falls through unchanged, which is right — a custom model's
+ * label is the user's own word and translating it would be a guess.
+ */
+const LABEL_NAMES: Record<string, string> = {
+  person: 'Personne',
+  car: 'Voiture',
+  truck: 'Camion',
+  bus: 'Bus',
+  motorcycle: 'Moto',
+  bicycle: 'Vélo',
+  dog: 'Chien',
+  cat: 'Chat',
+};
+
+export function labelName(label: string): string {
+  return LABEL_NAMES[label] ?? label;
+}
+
+/**
  * Animation timings, in milliseconds.
  *
  * Three durations, not a scale: 180 for something that just acknowledges a

@@ -21,6 +21,8 @@ export interface MockOptions {
   cameras: MockCamera[];
   resolution?: [number, number];
   topic?: string;
+  /** Door and window sensors the plan's openings point at. */
+  openings?: string[];
 }
 
 const LABELS = ['person', 'car', 'dog'];
@@ -107,6 +109,28 @@ export function createMockHass(options: MockOptions): any {
       last_updated: new Date().toISOString(),
     };
   });
+
+  /**
+   * Doors and windows that open and shut on their own.
+   *
+   * Home Assistant replaces the whole `states` object on every update and the
+   * card re-reads it on its own tick, so mutating in place is the honest stand-in
+   * for what a real install does — and it exercises the isovist rebuild that a
+   * solid door swinging open triggers.
+   */
+  for (const entity of options.openings ?? []) {
+    states[entity] = {
+      entity_id: entity,
+      state: 'off',
+      attributes: { device_class: entity.includes('porte') ? 'door' : 'window' },
+    };
+    const toggle = (): void => {
+      const current = states[entity] as { state: string };
+      states[entity] = { ...current, state: current.state === 'on' ? 'off' : 'on' };
+      setTimeout(toggle, 6000 + Math.random() * 9000);
+    };
+    setTimeout(toggle, 3000 + Math.random() * 6000);
+  }
 
   return {
     states,

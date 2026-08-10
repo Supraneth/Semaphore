@@ -199,6 +199,7 @@ function planBody(
                   sill: round(o.sill),
                   head: round(o.head),
                   blocksSight: o.blocksSight,
+                  entity: o.entity,
                 }))
               : undefined,
           }))

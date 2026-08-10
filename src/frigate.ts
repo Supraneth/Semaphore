@@ -10,6 +10,19 @@ import { GroundProjector, groundPoint, type BoxFormat } from './homography';
  * there is no ground position and no blip.
  */
 
+/**
+ * What the card is actually receiving, as opposed to what it hoped for.
+ *
+ * Both failures below are survivable by design — the scene still draws — and
+ * that is exactly why they have to be reported. A card that looks like it works
+ * and will never light a sector is worse than one that says so.
+ */
+export interface BridgeHealth {
+  mqtt: 'connected' | 'unavailable' | 'failed';
+  /** `local` means the timeline only knows what arrived since this page opened. */
+  history: 'remote' | 'local';
+}
+
 export interface BridgeOptions {
   topicPrefix?: string;
   instanceId?: string;
@@ -102,16 +115,23 @@ export class FrigateBridge {
    * still reads camera availability from the entities, it just never lights a
    * sector. Throwing would replace a working map with an error message.
    */
+  readonly health: BridgeHealth = { mqtt: 'unavailable', history: 'local' };
+
   async connect(): Promise<void> {
     const connection = this.hass?.connection;
-    if (!connection?.subscribeMessage) return;
+    if (!connection?.subscribeMessage) {
+      this.health.mqtt = 'unavailable';
+      return;
+    }
     try {
       this.unsubscribe = await connection.subscribeMessage(
         (msg: any) => this.onMessage(msg),
         { type: 'mqtt/subscribe', topic: this.topic },
       );
+      this.health.mqtt = 'connected';
     } catch {
       this.unsubscribe = null;
+      this.health.mqtt = 'failed';
     }
   }
 
@@ -266,6 +286,10 @@ export class FrigateBridge {
    */
   async fetchHistory(since: number): Promise<Detection[]> {
     const remote = (await this.fetchViaWebsocket(since)) ?? (await this.fetchViaProxy(since));
+    // A route that answered with an empty list still answered: the house was
+    // quiet, which is not the same as not knowing. Only `null` — both routes
+    // refused — means the timeline is limited to this session.
+    this.health.history = remote ? 'remote' : 'local';
 
     if (remote?.length) {
       // Merge into the one buffer rather than returning a parallel list, so

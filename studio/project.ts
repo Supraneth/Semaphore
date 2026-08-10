@@ -56,11 +56,30 @@ export function sampleHouse(): SemaphoreConfig {
         wallHeight: 2.5,
         walls: [
           wall([0, 0], [9, 0], [
-            { id: 'porte-entree', kind: 'door', at: 3.6, width: 1, sill: 0, head: 2.1 },
+            {
+              id: 'porte-entree',
+              kind: 'door',
+              at: 3.6,
+              width: 1,
+              sill: 0,
+              head: 2.1,
+              // A front door is solid, so it blocks sight while it is shut and
+              // stops blocking the moment its sensor says it is open.
+              blocksSight: true,
+              entity: 'binary_sensor.porte_entree',
+            },
           ]),
           wall([9, 0], [9, 7]),
           wall([9, 7], [0, 7], [
-            { id: 'baie', kind: 'window', at: 2, width: 2.4, sill: 0.9, head: 2.2 },
+            {
+              id: 'baie',
+              kind: 'window',
+              at: 2,
+              width: 2.4,
+              sill: 0.9,
+              head: 2.2,
+              entity: 'binary_sensor.baie_salon',
+            },
           ]),
           wall([0, 7], [0, 0]),
           wall([5, 0], [5, 7], [

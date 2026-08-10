@@ -2,11 +2,11 @@ import { LitElement, html, nothing, svg, type TemplateResult } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { ref } from 'lit/directives/ref.js';
-import type { CameraConfig, CameraState, Detection, SemaphoreConfig } from './types';
+import type { CameraConfig, CameraState, Detection, Point, SemaphoreConfig } from './types';
 import { validateConfig } from './config';
 import { Scene } from './plan/scene';
-import { FrigateBridge } from './frigate';
-import { STATE_STYLES, labelCss } from './theme';
+import { FrigateBridge, type BridgeHealth } from './frigate';
+import { STATE_STYLES, labelCss, labelName, withAlpha } from './theme';
 import { styles } from './semaphore-card-css';
 import { DEFAULT_VIEW, VIEW_PRESETS, presetOf, type ViewPreset } from './plan/view';
 
@@ -48,7 +48,31 @@ const ICON = {
   /** Fit everything on screen: corner brackets. */
   frame: svg`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>`,
   close: svg`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>`,
+  /** The shortcut sheet. */
+  keys: svg`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M7 10h.01M11 10h.01M15 10h2M7 14h10"/></svg>`,
 } as const;
+
+/** What the keyboard does, and the sheet that says so. */
+const SHORTCUTS: Array<[string, string]> = [
+  ['1 – 9', 'Ouvrir la caméra n°…'],
+  ['← →', 'Caméra précédente / suivante'],
+  ['Échap', "Revenir à la vue d'ensemble"],
+  ['C', 'Tout cadrer'],
+  ['N', 'Niveau suivant'],
+  ['S', 'Séparer / empiler les niveaux'],
+  ['?', 'Afficher ou masquer cette aide'],
+];
+
+/** Local state a reload should not throw away. Bumped if the shape changes. */
+const STORE_PREFIX = 'semaphore-card/v1';
+/** A drag fires dozens of view changes a second; the disk does not need them. */
+const SAVE_DEBOUNCE_MS = 500;
+
+interface SavedState {
+  view?: { yaw: number; pitch: number; zoom: number; center: Point };
+  level?: string;
+  exploded?: boolean;
+}
 
 @customElement('semaphore-card')
 export class SemaphoreCard extends LitElement {
@@ -80,6 +104,11 @@ export class SemaphoreCard extends LitElement {
   private now = Date.now();
   @state() private ready = false;
   @state() private error = '';
+  /** What the bridge is actually receiving. Drives the degradation notices. */
+  @state() private health?: BridgeHealth;
+  /** Ids of the openings a sensor reports open. */
+  @state() private openIds: ReadonlySet<string> = new Set();
+  @state() private showHelp = false;
 
   @query('.canvas') private canvasEl?: HTMLCanvasElement;
   @query('.stage') private stageEl?: HTMLElement;
@@ -93,6 +122,7 @@ export class SemaphoreCard extends LitElement {
   private chipEls = new Map<string, HTMLElement>();
   private io?: IntersectionObserver;
   private states = new Map<string, CameraState>();
+  private saveTimer = 0;
 
   // ---- Home Assistant contract -------------------------------------------
 
@@ -201,6 +231,10 @@ export class SemaphoreCard extends LitElement {
     document.removeEventListener('visibilitychange', this.onVisibility);
     clearInterval(this.tick);
     clearInterval(this.thumbTimer);
+    clearTimeout(this.saveTimer);
+    // A card removed mid-drag — a tab change, a dashboard edit — must not lose
+    // the placement the debounce was still holding.
+    this.saveNow();
     this.bridge?.disconnect();
     this.scene?.destroy();
   }
@@ -231,6 +265,7 @@ export class SemaphoreCard extends LitElement {
         onIdleChange: () => undefined,
         // Turning the scene by hand means no preset describes it any more.
         onViewMoved: () => {
+          this.saveSoon();
           if (this.preset) {
             this.preset = undefined;
             this.requestUpdate();
@@ -238,6 +273,7 @@ export class SemaphoreCard extends LitElement {
         },
       });
       this.scene.init(stage);
+      this.restore();
       this.ready = true;
 
       this.bridge = new FrigateBridge(this.hass, this.config.cameras, {
@@ -248,11 +284,13 @@ export class SemaphoreCard extends LitElement {
         retentionMs: (this.config['decay-seconds'] ?? 12) * 1000 + 4000,
       });
       await this.bridge.connect();
+      this.health = { ...this.bridge.health };
 
       this.tick = window.setInterval(() => this.update_(), TICK_MS);
       this.events = await this.bridge.fetchHistory(
         Date.now() - (this.config['timeline-hours'] ?? 24) * 3600_000,
       );
+      this.health = { ...this.bridge.health };
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       this.error = `La scène n'a pas pu démarrer : ${detail}`;
@@ -263,6 +301,14 @@ export class SemaphoreCard extends LitElement {
   override updated(): void {
     this.bridge?.setHass(this.hass);
     this.measureChips();
+    // Chips are placed by the render loop, and the render loop deliberately does
+    // not run at rest (invariant 7). Any Lit re-render between two paints — a
+    // state change, a level switch, a new thumbnail — therefore handed back a
+    // fresh element that had never been positioned, and an absolutely placed
+    // element with no transform sits at the stage's top-left corner, on top of
+    // the storey control. Placing them here as well costs nothing: the sizes
+    // have just been measured and no layout is read back.
+    this.positionChips();
   }
 
   // ---- the one tick -------------------------------------------------------
@@ -303,6 +349,8 @@ export class SemaphoreCard extends LitElement {
 
     this.scene.setDetections(this.bridge.liveDetections());
 
+    if (this.refreshOpenings()) dirty = true;
+
     if (this.bridge.timelineVersion !== this.eventsVersion) {
       this.eventsVersion = this.bridge.timelineVersion;
       this.events = this.bridge.timeline(
@@ -312,6 +360,38 @@ export class SemaphoreCard extends LitElement {
     }
 
     if (dirty) this.requestUpdate();
+  }
+
+  // ---- openings -----------------------------------------------------------
+
+  /**
+   * Which doors and windows are open, from their sensors.
+   *
+   * `on` is what a `binary_sensor` in the door or window class reports; `open`
+   * covers a `cover` entity used for the same job. Anything else — including
+   * `unavailable` — counts as shut, because drawing a red aperture for a sensor
+   * that has simply lost its battery is a false alarm, and a security readout
+   * that cries wolf stops being read.
+   */
+  private refreshOpenings(): boolean {
+    const open = new Set<string>();
+    for (const level of this.config.levels) {
+      for (const wall of level.walls ?? []) {
+        for (const o of wall.openings ?? []) {
+          if (!o.entity) continue;
+          const state = this.hass?.states?.[o.entity]?.state;
+          if (state === 'on' || state === 'open') open.add(o.id);
+        }
+      }
+    }
+
+    if (open.size === this.openIds.size && [...open].every((id) => this.openIds.has(id))) {
+      return false;
+    }
+    this.openIds = open;
+    // A door that opens stops blocking sight, so the isovists have to follow it.
+    this.scene?.setOpenOpenings(open);
+    return true;
   }
 
   // ---- overlay ------------------------------------------------------------
@@ -411,18 +491,172 @@ export class SemaphoreCard extends LitElement {
   private selectLevel(id: string): void {
     this.activeLevel = id;
     this.scene?.setActiveLevel(id);
+    this.saveSoon();
   }
 
   private toggleExplode(): void {
     this.exploded = !this.exploded;
     this.scene?.setExploded(this.exploded ? 3.2 : 0);
+    this.saveSoon();
   }
 
   private applyPreset(preset: ViewPreset): void {
     this.preset = preset;
     this.scene?.applyPreset(preset);
+    this.saveSoon();
     this.requestUpdate();
   }
+
+  /** "Cadrer" hands framing back to the card — here and after a reload. */
+  private frameAll(): void {
+    this.scene?.frame();
+    this.saveSoon();
+  }
+
+  // ---- persistence --------------------------------------------------------
+
+  /**
+   * A key for this card, not for this dashboard.
+   *
+   * There is no card id in a Lovelace config, so the scene it describes is the
+   * identity: the storeys and the cameras. Two Sémaphore cards showing the same
+   * house share a placement, which is what you want; one showing the garage
+   * keeps its own.
+   */
+  private get storeKey(): string {
+    const seed = [
+      this.config['instance-id'] ?? '',
+      ...this.config.levels.map((l) => l.id),
+      ...this.config.cameras.map((c) => c.name),
+    ].join('|');
+    let hash = 2166136261;
+    for (let i = 0; i < seed.length; i++) {
+      hash ^= seed.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `${STORE_PREFIX}/${(hash >>> 0).toString(36)}`;
+  }
+
+  private saveSoon(): void {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => this.saveNow(), SAVE_DEBOUNCE_MS);
+  }
+
+  private saveNow(): void {
+    if (!this.scene) return;
+    try {
+      const saved: SavedState = {
+        // Only a view the user placed themselves is worth keeping. Storing a
+        // fitted one would freeze the card at the size of the window it was
+        // last framed in, and the automatic re-frame on resize — the whole of
+        // invariant 16 — would never run again.
+        view: this.scene.placedByUser ? this.scene.view.snapshot() : undefined,
+        level: this.activeLevel,
+        exploded: this.exploded,
+      };
+      localStorage.setItem(this.storeKey, JSON.stringify(saved));
+    } catch {
+      /* private browsing, or a full quota. The card works, it just forgets. */
+    }
+  }
+
+  /**
+   * Puts back what the last visit left.
+   *
+   * The angle found by hand used to die with the page, which made turning the
+   * scene feel like a toy rather than a setting. A stored view outranks the
+   * one in the config: the config is where the card started, the stored view is
+   * where its owner last put it.
+   */
+  private restore(): void {
+    let saved: SavedState | null = null;
+    try {
+      const raw = localStorage.getItem(this.storeKey);
+      saved = raw ? (JSON.parse(raw) as SavedState) : null;
+    } catch {
+      saved = null;
+    }
+    if (!saved || !this.scene) return;
+
+    if (saved.level && this.config.levels.some((l) => l.id === saved.level)) {
+      this.activeLevel = saved.level;
+      this.scene.setActiveLevel(saved.level);
+    }
+    if (saved.exploded && this.config.levels.length > 1) {
+      this.exploded = true;
+      this.scene.setExploded(3.2);
+    }
+
+    const view = saved.view;
+    if (
+      view &&
+      [view.yaw, view.pitch, view.zoom].every((n) => typeof n === 'number' && isFinite(n)) &&
+      Array.isArray(view.center) &&
+      view.center.every((n) => typeof n === 'number' && isFinite(n))
+    ) {
+      this.scene.restoreView(view);
+      this.preset = presetOf(view.yaw, view.pitch);
+    }
+  }
+
+  // ---- keyboard -----------------------------------------------------------
+
+  /**
+   * The card, from the keyboard.
+   *
+   * Scoped to the stage rather than to the window on purpose: a dashboard holds
+   * a dozen cards, and one of them grabbing every digit key would break the
+   * other eleven. The stage takes focus, and then it answers.
+   */
+  private onKey = (ev: KeyboardEvent): void => {
+    if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+
+    // Escape belongs to the card even from inside a control — it is how you
+    // leave, and leaving must never depend on where focus landed.
+    if (ev.key === 'Escape') {
+      if (this.showHelp) this.showHelp = false;
+      else if (this.focused) this.unfocus();
+      else return;
+      ev.preventDefault();
+      return;
+    }
+
+    // A button already owns Enter, Space and the arrows inside a segmented
+    // control. Stealing them would break the controls to add a shortcut.
+    const target = ev.composedPath()[0];
+    if (target instanceof HTMLElement && target.closest('button')) return;
+
+    const cameras = this.config.cameras;
+    const key = ev.key;
+
+    if (key === '?' || (key === '/' && ev.shiftKey)) {
+      this.showHelp = !this.showHelp;
+    } else if (key >= '1' && key <= '9') {
+      const cam = cameras[Number(key) - 1];
+      if (!cam) return;
+      this.focusCamera(cam.name);
+    } else if (key === 'ArrowRight' || key === 'ArrowLeft') {
+      if (!cameras.length) return;
+      const step = key === 'ArrowRight' ? 1 : -1;
+      const at = cameras.findIndex((c) => c.name === this.focused);
+      // Nothing focused yet: right starts at the first camera, left at the last.
+      const next = at < 0 ? (step > 0 ? 0 : cameras.length - 1) : at + step;
+      this.focusCamera(cameras[(next + cameras.length) % cameras.length].name);
+    } else if (key === 'c' || key === 'C') {
+      this.frameAll();
+    } else if (key === 'n' || key === 'N') {
+      const levels = this.config.levels;
+      if (levels.length < 2) return;
+      const at = levels.findIndex((l) => l.id === this.activeLevel);
+      this.selectLevel(levels[(at + 1) % levels.length].id);
+    } else if (key === 's' || key === 'S') {
+      if (this.config.levels.length < 2) return;
+      this.toggleExplode();
+    } else {
+      return;
+    }
+    ev.preventDefault();
+  };
 
   private get span(): number {
     return (this.config['timeline-hours'] ?? 24) * 3600_000;
@@ -452,15 +686,20 @@ export class SemaphoreCard extends LitElement {
     if (!this.config) return html``;
     return html`
       <ha-card>
+        ${this.renderVerdict()}
         ${this.migrated ? this.renderMigrationNotice() : nothing}
+        ${this.renderHealthNotices()}
         <div
           class="stage ${this.focused ? 'focused' : ''} ${this.autoAspect ? 'auto-aspect' : ''}"
           style=${this.stageStyle()}
+          tabindex="0"
+          aria-label="Plan de la maison. Tapez ? pour les raccourcis clavier."
+          @keydown=${this.onKey}
         >
           <canvas class="canvas"></canvas>
           <div class="overlay">
-            ${this.renderLevels()} ${this.renderStatus()} ${this.renderChips()}
-            ${this.renderViewControls()} ${this.renderPanel()}
+            ${this.renderLevels()} ${this.renderChips()}
+            ${this.renderViewControls()} ${this.renderPanel()} ${this.renderHelp()}
           </div>
         </div>
         ${this.renderTimeline()}
@@ -526,41 +765,189 @@ export class SemaphoreCard extends LitElement {
         </div>
         <button
           class="icon"
-          title="Tout cadrer"
+          title="Tout cadrer (C)"
           aria-label="Tout cadrer"
-          @click=${() => this.scene?.frame()}
+          @click=${this.frameAll}
         >${ICON.frame}</button>
+        <!-- A shortcut nobody can discover does not exist. Hidden on a touch
+             screen, where there is no keyboard to describe. -->
+        <button
+          class="icon fine-pointer-only"
+          aria-pressed=${this.showHelp}
+          title="Raccourcis clavier (?)"
+          aria-label="Raccourcis clavier"
+          @click=${() => (this.showHelp = !this.showHelp)}
+        >${ICON.keys}</button>
       </div>
     `;
   }
 
   /**
-   * One line on the state of the house.
+   * The verdict: what is happening, in a sentence, across the top of the card.
    *
-   * It carries the colour of what it is reporting, because a pill that reads
-   * "2 détections" in the same parchment as "tout est calme" is a sentence you
-   * have to finish before you know whether to care.
+   * This replaces a 12 px pill in the corner that read "2 détections" and could
+   * not be clicked. That pill was the most important thing on the card and the
+   * smallest thing on it — a count you had to finish reading before you knew
+   * whether to care, next to no way of finding out what it counted. A phrase
+   * you can read from across the room, in the colour of what it reports, and a
+   * click that opens the event it is talking about.
+   *
+   * The colours stay the chart palette, so the bar is one more entry in the
+   * legend rather than a decoration of its own (invariant 20).
    */
-  private renderStatus(): TemplateResult {
-    const alerts = [...this.states.values()].filter((s) => s === 'alert').length;
-    const moving = [...this.states.values()].filter((s) => s === 'motion').length;
-    const off = [...this.states.values()].filter((s) => s === 'offline').length;
+  private renderVerdict(): TemplateResult {
+    const { tone, phrase } = this.verdict();
+    const css = STATE_STYLES[tone].css;
+    const wash = withAlpha(css, 0.13);
+    const last = this.events[this.events.length - 1];
 
-    let tone: CameraState = 'nominal';
-    let text = 'Tout est calme';
-    if (alerts) {
-      tone = 'alert';
-      text = `${alerts} détection${alerts > 1 ? 's' : ''}`;
-    } else if (moving) {
-      tone = 'motion';
-      text = `${moving} mouvement${moving > 1 ? 's' : ''}`;
-    } else if (off) {
-      tone = 'offline';
-      text = `${off} hors ligne`;
+    const off = [...this.states.values()].filter((s) => s === 'offline').length;
+    const open = this.openIds.size;
+
+    return html`
+      <button
+        class="verdict ${tone}"
+        style="color:${css};background-image:linear-gradient(${wash},${wash})"
+        aria-live="polite"
+        ?disabled=${!last}
+        title=${last ? 'Ouvrir le dernier événement' : ''}
+        @click=${() => last && this.selectEvent(last)}
+      >
+        <span class="pip"></span>
+        <span class="phrase">${phrase}</span>
+        <span class="tags">
+          ${open
+            ? html`<span class="tag" style="color:${STATE_STYLES.alert.css}"
+                >${open} ouverte${open > 1 ? 's' : ''}</span
+              >`
+            : nothing}
+          ${off && tone !== 'offline'
+            ? html`<span class="tag" style="color:${STATE_STYLES.offline.css}"
+                >${off} hors ligne</span
+              >`
+            : nothing}
+        </span>
+      </button>
+    `;
+  }
+
+  /**
+   * The state of the house, ranked.
+   *
+   * A classified object outranks bare movement, which outranks a camera that
+   * has stopped answering, which outranks quiet. Open doors are deliberately
+   * not in this ranking: with no arming state to compare them against, an open
+   * window at four in the afternoon is a fact, not an alarm. It gets a tag.
+   */
+  private verdict(): { tone: CameraState; phrase: string } {
+    if (!this.ready) return { tone: 'nominal', phrase: 'Démarrage de la scène…' };
+
+    const off = [...this.states.values()].filter((s) => s === 'offline').length;
+    const live = this.bridge?.liveDetections() ?? [];
+    const alerting = live.filter((d) => !d.ended && this.bridge?.isAlert(d));
+    const moving = live.filter((d) => !d.ended);
+
+    const newest = (list: Detection[]): Detection | undefined =>
+      list.reduce<Detection | undefined>(
+        (best, d) => (!best || d.startTime > best.startTime ? d : best),
+        undefined,
+      );
+
+    const said = (d: Detection, fallback: string): string => {
+      const cam = this.config.cameras.find((c) => c.name === d.camera);
+      const where = cam?.label ?? cam?.name ?? d.camera;
+      return `${fallback} — ${where}, ${agoLabel(d.startTime, this.now)}`;
+    };
+
+    const alert = newest(alerting);
+    if (alert) return { tone: 'alert', phrase: said(alert, labelName(alert.label)) };
+
+    const motion = newest(moving);
+    if (motion) return { tone: 'motion', phrase: said(motion, 'Mouvement') };
+
+    if (off) {
+      return {
+        tone: 'offline',
+        phrase: `${off} caméra${off > 1 ? 's' : ''} hors ligne`,
+      };
     }
-    return html`<div class="status ${tone}" style="color:${STATE_STYLES[tone].css}">
-      <span class="pip"></span>${text}
-    </div>`;
+
+    // Quiet — and how long it has been quiet is the useful half of that.
+    const last = this.events[this.events.length - 1];
+    const since = last ? (last.endTime ?? last.startTime) : undefined;
+    return {
+      tone: 'nominal',
+      phrase:
+        since !== undefined && this.now > since
+          ? `Rien à signaler depuis ${durationLabel(this.now - since)}`
+          : 'Rien à signaler',
+    };
+  }
+
+  /**
+   * What the card is not receiving.
+   *
+   * Both of these degrade silently by design — without MQTT the scene still
+   * draws, it simply never lights a sector; without Frigate's event API the
+   * timeline still fills, but only from this session. A card that looks like it
+   * works and will never report anything is worse than one that says so, and
+   * the symptom on its own ("nothing ever happens at my house") is unusually
+   * hard to trace back to its cause.
+   */
+  private renderHealthNotices(): TemplateResult | typeof nothing {
+    const health = this.health;
+    if (!health) return nothing;
+
+    const notices: string[] = [];
+    if (health.mqtt === 'unavailable') {
+      notices.push(
+        "Le module MQTT de Home Assistant n'est pas joignable : le plan s'affiche, " +
+          "mais aucun secteur ne s'allumera. Vérifiez l'intégration MQTT.",
+      );
+    } else if (health.mqtt === 'failed') {
+      notices.push(
+        `L'abonnement à « ${this.config['topic-prefix'] ?? 'frigate'}/events » a échoué : ` +
+          "le plan s'affiche, mais aucun secteur ne s'allumera.",
+      );
+    }
+    if (health.history === 'local') {
+      notices.push(
+        "L'historique Frigate est indisponible : la frise ne montre que les " +
+          'événements reçus depuis le chargement de cette page.',
+      );
+    }
+    if (!notices.length) return nothing;
+
+    return html`${notices.map((text) => html`<div class="notice">${text}</div>`)}`;
+  }
+
+  /** The shortcut sheet. Opened by `?`, and by the button that says so. */
+  private renderHelp(): TemplateResult | typeof nothing {
+    if (!this.showHelp) return nothing;
+    return html`
+      <div class="help" @click=${() => (this.showHelp = false)}>
+        <div class="sheet" @click=${(ev: Event) => ev.stopPropagation()}>
+          <header>
+            <span class="title">Raccourcis clavier</span>
+            <button
+              class="icon"
+              title="Fermer"
+              aria-label="Fermer l'aide"
+              @click=${() => (this.showHelp = false)}
+            >${ICON.close}</button>
+          </header>
+          <dl>
+            ${SHORTCUTS.map(
+              ([keys, what]) => html`<dt><kbd>${keys}</kbd></dt>
+                <dd>${what}</dd>`,
+            )}
+          </dl>
+          <p class="hint">
+            Glissez pour pivoter, molette ou pincement pour zoomer.
+          </p>
+        </div>
+      </div>
+    `;
   }
 
   private renderChips(): TemplateResult {
@@ -647,7 +1034,7 @@ export class SemaphoreCard extends LitElement {
               <i style="background:${labelCss(this.selected.label)}"></i>
               <strong>${this.selected.label}</strong>
               <span>${clockLabel(this.selected.startTime)}</span>
-              <span>${durationLabel(this.selected)}</span>
+              <span>${durationLabel(spanOf(this.selected))}</span>
               ${this.selected.score
                 ? html`<span>${Math.round(this.selected.score * 100)} %</span>`
                 : nothing}
@@ -732,7 +1119,8 @@ export class SemaphoreCard extends LitElement {
             return html`<button
               class="mark ${this.selected?.id === m.id ? 'on' : ''}"
               style="left:${left}%;width:${Math.max(0.5, Math.min(100, end) - left)}%;background:${labelCss(m.label)}"
-              title="${m.label} · ${clockLabel(m.startTime)} · ${durationLabel(m)}"
+              title="${labelName(m.label)} · ${clockLabel(m.startTime)} · ${durationLabel(spanOf(m))}"
+              aria-label="${labelName(m.label)} sur ${cam.label ?? cam.name} à ${clockLabel(m.startTime)}, ${durationLabel(spanOf(m))}"
               @click=${() => this.selectEvent(m)}
             ></button>`;
           })}
@@ -831,11 +1219,32 @@ const clockLabel = (t: number): string => {
 };
 const hourLabel = (t: number): string => `${two(new Date(t).getHours())} h`;
 
-function durationLabel(det: Detection): string {
-  const seconds = Math.max(1, Math.round(((det.endTime ?? Date.now()) - det.startTime) / 1000));
+/** A span, in the coarsest unit that still says something. */
+function durationLabel(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
   if (seconds < 60) return `${seconds} s`;
   const minutes = Math.round(seconds / 60);
-  return minutes < 60 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    const rest = minutes % 60;
+    return rest ? `${hours} h ${two(rest)}` : `${hours} h`;
+  }
+  return `${Math.round(hours / 24)} j`;
+}
+
+const spanOf = (det: Detection): number => (det.endTime ?? Date.now()) - det.startTime;
+
+/**
+ * How long ago, as a phrase.
+ *
+ * "il y a 3 s" for something that is happening right now reads as a stopwatch
+ * rather than as news, and it changes on every tick — which on a line carrying
+ * `aria-live` means a screen reader announcing the same event ten times.
+ */
+function agoLabel(t: number, now: number): string {
+  const delta = now - t;
+  return delta < 45_000 ? "à l'instant" : `il y a ${durationLabel(delta)}`;
 }
 
 (window as any).customCards = (window as any).customCards ?? [];

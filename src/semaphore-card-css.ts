@@ -91,6 +91,17 @@ export const styles = css`
     cursor: grabbing;
   }
 
+  /* The stage takes keyboard focus, so the card can answer keys without a
+     window-level listener that would fight every other card on the dashboard.
+     Inset, because an outline outside a full-bleed stage is clipped away. */
+  .stage:focus {
+    outline: none;
+  }
+  .stage:focus-visible {
+    outline: 2px solid ${white};
+    outline-offset: -2px;
+  }
+
   /* The scene is a bright parchment plan on a dark ground, and the floating
      chrome sits on whichever of the two it lands on. These two washes give the
      controls something dark to sit against at the very top and bottom without
@@ -245,41 +256,80 @@ export const styles = css`
     outline-offset: 2px;
   }
 
-  /* ---- status ---------------------------------------------------------- */
+  /* ---- verdict ---------------------------------------------------------- */
 
-  .status {
-    position: absolute;
-    top: var(--semaphore-inset);
-    right: var(--semaphore-inset);
+  /* The first thing read, so it gets the first line of the card and the full
+     width of it. The tone colour arrives inline, as the text colour and as a
+     wash over the ink — one value driving both keeps them from disagreeing. */
+  .verdict {
     display: flex;
     align-items: center;
-    gap: 7px;
-    max-width: 46%;
-    font-size: 12px;
-    letter-spacing: 0.04em;
-    background: ${glassBg};
-    border: 1px solid ${glassEdge};
-    border-radius: 999px;
-    padding: 6px 12px;
-    backdrop-filter: blur(8px);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 11px 14px;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    border: none;
+    border-bottom: 1px solid ${glassEdge};
+    background-color: var(--semaphore-ink);
+    box-shadow: inset 3px 0 0 currentColor;
+    cursor: pointer;
+    transition: filter ${tap} ${ease};
   }
-  /* The count is what you read; the colour is what you read it with. */
-  .status.nominal {
-    color: var(--semaphore-parchment);
+  .verdict:hover:not([disabled]) {
+    filter: brightness(1.18);
   }
-  .status .pip {
+  /* Nothing to open yet. Still the state of the house, still worth reading. */
+  .verdict[disabled] {
+    cursor: default;
+  }
+  .verdict:focus-visible {
+    outline: 2px solid ${white};
+    outline-offset: -3px;
+  }
+
+  .verdict .pip {
     flex: none;
-    width: 7px;
-    height: 7px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     background: currentColor;
   }
-  .status.alert .pip,
-  .status.motion .pip {
+  .verdict.alert .pip,
+  .verdict.motion .pip {
     animation: pulse 1.6s ${ease} infinite;
+  }
+
+  .verdict .phrase {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Quiet is the one state that should not shout: the phrase reads in the
+     card's own ink, and the palette is kept for the things worth a colour. */
+  .verdict.nominal .phrase {
+    color: var(--semaphore-parchment);
+    font-weight: 500;
+  }
+
+  .verdict .tags {
+    display: flex;
+    flex: none;
+    gap: 6px;
+  }
+  .verdict .tag {
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 8px;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    white-space: nowrap;
   }
 
   /* ---- camera chips ---------------------------------------------------- */
@@ -468,6 +518,92 @@ export const styles = css`
     }
   }
 
+  /* ---- shortcut sheet --------------------------------------------------- */
+
+  .help {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: var(--semaphore-inset);
+    box-sizing: border-box;
+    background: ${unsafeCSS(withAlpha(CHART.ink, 0.72))};
+    backdrop-filter: blur(4px);
+    /* Above the chips and the panel: it is a modal answer to a modal question. */
+    z-index: 3;
+    animation: rise ${panel} ${ease} both;
+  }
+
+  .help .sheet {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: min(320px, 100%);
+    max-height: 100%;
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 12px 14px 14px;
+    border-radius: var(--semaphore-radius);
+    background: ${glassBgSolid};
+    border: 1px solid ${glassEdge};
+    box-shadow: 0 8px 28px ${unsafeCSS(withAlpha(CHART.ink, 0.55))};
+  }
+
+  .help header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--semaphore-parchment);
+    font-size: 13px;
+  }
+  .help header .title {
+    flex: 1;
+    font-weight: 600;
+  }
+  .help header button.icon {
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .help dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 7px 12px;
+    margin: 0;
+    font-size: 12px;
+    color: var(--semaphore-parchment);
+  }
+  .help dt {
+    margin: 0;
+  }
+  .help dd {
+    margin: 0;
+    color: ${slate};
+  }
+  .help kbd {
+    display: inline-block;
+    min-width: 18px;
+    padding: 3px 7px;
+    text-align: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--semaphore-parchment);
+    background: ${glassEdge};
+    border: 1px solid ${glassEdgeLit};
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  .help .hint {
+    margin: 2px 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: ${slate};
+  }
+
   /* ---- timeline -------------------------------------------------------- */
 
   .timeline {
@@ -650,8 +786,14 @@ export const styles = css`
     .segmented button {
       padding: 7px 10px;
     }
-    .status {
-      max-width: 40%;
+    .verdict {
+      padding: 9px 12px;
+      font-size: 12px;
+    }
+    /* On a card this narrow the phrase is the whole budget; the counts are
+       drawn on the plan anyway, in red, where they cannot be missed. */
+    .verdict .tags {
+      display: none;
     }
     .chip .thumb {
       display: none;
@@ -690,6 +832,11 @@ export const styles = css`
   /* A finger is not a mouse pointer. Everything it has to hit gets the room to
      be hit, on the axis where there is room to give. */
   @media (pointer: coarse) {
+    /* A button offering keyboard shortcuts to a device with no keyboard is a
+       control that can only disappoint. */
+    .fine-pointer-only {
+      display: none;
+    }
     .segmented button {
       padding: 9px 13px;
     }
@@ -716,9 +863,12 @@ export const styles = css`
       animation: none !important;
       transition: none !important;
     }
+    .help {
+      animation: none !important;
+    }
     .chip.alert .pip,
     .chip.motion .pip,
-    .status .pip {
+    .verdict .pip {
       animation: none;
       opacity: 1;
       box-shadow: none;

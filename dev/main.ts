@@ -19,6 +19,11 @@ const card = document.createElement('semaphore-card') as any;
 card.setConfig(config);
 card.hass = createMockHass({
   resolution: config.cameras[0].resolution,
+  // Every opening in the plan that names a sensor gets one that answers.
+  openings: config.levels.flatMap(
+    (l) =>
+      l.walls?.flatMap((w) => (w.openings ?? []).map((o) => o.entity ?? '')) ?? [],
+  ).filter(Boolean),
   // Normalised image coordinates, inside the calibrated quad above.
   cameras: config.cameras.map((c, i) => ({
     name: c.name,

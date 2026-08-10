@@ -124,8 +124,13 @@ export function solidSpans(wall: Wall): Array<[number, number]> {
  * it is explicitly marked `blocksSight` — a doorway is a hole in the sight line
  * as much as in the masonry, and getting that wrong is what makes an indoor
  * camera's cone obviously wrong to anyone who lives there.
+ *
+ * `open` carries the ids of the openings a `binary_sensor` currently reports as
+ * open. A solid door blocks sight while it is shut and stops blocking the moment
+ * it is opened, which is the whole of what a door does — and it means the
+ * coverage drawn on the plan follows the house rather than the drawing of it.
  */
-export function occludersFor(level: Level): Segment[] {
+export function occludersFor(level: Level, open?: ReadonlySet<string>): Segment[] {
   const segments: Segment[] = [];
 
   for (const wall of level.walls ?? []) {
@@ -135,7 +140,7 @@ export function occludersFor(level: Level): Segment[] {
 
     const blocking = new Set(
       tidyOpenings(wall)
-        .filter((o) => o.blocksSight)
+        .filter((o) => o.blocksSight && !open?.has(o.id))
         .map((o) => o.id),
     );
 

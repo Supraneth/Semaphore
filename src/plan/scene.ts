@@ -245,10 +245,27 @@ export class Scene {
   /** Recomputes sight blockers. Cheap, and only on a geometric change. */
   rebuildOccluders(): void {
     for (const level of this.config.levels) {
-      this.occluders.set(level.id, occludersFor(level));
+      this.occluders.set(level.id, occludersFor(level, this.openOpenings));
     }
     for (const rt of this.runtimes.values()) rt.dirty = true;
     this.invalidate();
+  }
+
+  /** Openings a sensor reports open, by id. */
+  private openOpenings: ReadonlySet<string> = new Set();
+
+  /**
+   * Which openings are currently open.
+   *
+   * A door swinging changes what the cameras can see, so this is a geometric
+   * change and goes through `rebuildOccluders` — but only when the set actually
+   * differs. The card calls this on every tick; recomputing isovists ten times a
+   * second because nothing moved is exactly what invariant 6 exists to prevent.
+   */
+  setOpenOpenings(ids: ReadonlySet<string>): void {
+    if (sameSet(this.openOpenings, ids)) return;
+    this.openOpenings = new Set(ids);
+    this.rebuildOccluders();
   }
 
   private levelOf(cam: CameraConfig): Level {
@@ -455,6 +472,7 @@ export class Scene {
       floorOpacity: this.config['floor-opacity'] ?? 0.1,
       reducedMotion: this.reducedMotion,
       explode: this.explode,
+      openOpenings: this.openOpenings,
       editing: this.editing,
     });
 
@@ -466,6 +484,29 @@ export class Scene {
     return [...this.runtimes.values()];
   }
 
+  /**
+   * Puts the view back where a previous session left it.
+   *
+   * Counts as the user having placed it themselves — because they did, one
+   * reload ago. That is what stops the next resize from re-fitting it away, and
+   * it stays theirs until they press "Cadrer".
+   */
+  restoreView(saved: ReturnType<View['snapshot']>): void {
+    this.view.yaw = saved.yaw;
+    this.view.pitch = saved.pitch;
+    this.view.zoom = saved.zoom;
+    this.view.center = [...saved.center] as Point;
+    this.view.refresh();
+    this.framed = true;
+    this.userFramed = true;
+    this.invalidate();
+  }
+
+  /** True while the view is one the user placed, rather than a fitted one. */
+  get placedByUser(): boolean {
+    return this.userFramed;
+  }
+
   /** Screen position of a camera, for the DOM chip overlay. */
   project(cam: CameraConfig): { x: number; y: number } {
     const level = this.levelOf(cam);
@@ -474,4 +515,10 @@ export class Scene {
     const [x, y] = this.renderer.toScreen(cam.position, z);
     return { x, y };
   }
+}
+
+function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const id of a) if (!b.has(id)) return false;
+  return true;
 }

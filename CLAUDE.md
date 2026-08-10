@@ -19,7 +19,9 @@ Complet et exécuté — mais jamais dans un vrai Home Assistant.
 Vérifié mécaniquement :
 
 - `tsc --noEmit` strict passe, `vite build` produit `dist/semaphore.js`
-  (~38 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur).
+  (45,6 kB gzip — plus aucune dépendance runtime hors Lit, et plus d'éditeur.
+  Le verdict, le clavier, la feuille de raccourcis, la persistance, les bandeaux
+  de santé et le rendu des ouvertures ont coûté 5,7 kB à eux tous).
 - **La carte se manipule** : glisser pivote, molette et pincement zooment, le
   pincement ne fait pas tourner, et plus aucun préréglage ne s'attribue un angle
   trouvé à la main. Vérifié en pilotant de vrais événements souris et tactiles.
@@ -44,6 +46,29 @@ Vérifié mécaniquement :
   heures, un repère par événement portant étiquette / heure / durée, largeur
   minimale respectée pour un événement de 5 s, curseur à l'heure exacte, clic
   ouvrant l'événement dans le panneau, fenêtre vide annoncée.
+- **Les chips ne s'échouent plus dans le coin.** Deux chips sur quatre restaient
+  sans `transform`, empilées sur le contrôle d'étage, parce que le placement ne
+  vivait que dans `onFrame` et que la boucle rAF ne peint pas au repos. Vérifié
+  dans le banc : les quatre sont placées, en continu.
+- **La barre de verdict dit l'état en une phrase** : « Personne — Salon, à
+  l'instant » quand quelque chose se passe, « Rien à signaler depuis 3 h 12 »
+  sinon, plus les compteurs d'ouvertures et de caméras hors ligne. Cliquable,
+  `aria-live`. Vérifiée sur la scène en marche.
+- **Le clavier répond** : `1…9`, `←/→`, `Échap`, `C`, `N`, `S`, `?`. Vérifié en
+  pilotant de vraies touches — `2` ouvre bien la deuxième caméra, `Échap` rend
+  la vue d'ensemble, `C` reprend le cadrage automatique.
+- **La vue survit au rechargement** : lacet, inclinaison, zoom et centre
+  identiques au pixel près après un `reload`, niveau actif et éclatement inclus.
+  **Cadrer** efface l'enregistrement, donc le recadrage automatique reprend aussi
+  après rechargement.
+- **Les dégradations se disent** : `FrigateBridge` publie ce qu'il reçoit
+  vraiment (`mqtt`, `history`), et la carte affiche un bandeau plutôt que de
+  faire semblant. Vérifié sur le banc, où l'API d'historique n'existe pas.
+- **Une ouverture reliée à un capteur se voit et se calcule** : la baie et la
+  porte d'entrée du banc s'ouvrent et se ferment, l'aperture est peinte en rouge,
+  et une porte `blocksSight` qui s'ouvre cesse de bloquer — occultants mesurés
+  à 39,5 m fermée contre 38,5 m ouverte (exactement la largeur de la porte), et
+  une caméra témoin visant à travers passe de 3,61 m² à 9,88 m² de couverture.
 - Le format tient : proportion par défaut et réglée, hauteur en pixels, plafond,
   et une cellule de grille qui l'emporte sur tout le reste.
 - **L'éditeur autonome tourne**, piloté en Chromium headless via CDP : tracé
@@ -53,7 +78,8 @@ Vérifié mécaniquement :
   accents, séquences à fleur de clé —, refus d'un YAML fautif en nommant la
   ligne sans toucher au plan affiché, persistance après rechargement, export
   relu. Aucune exception, console propre.
-- L'aller-retour `cardYaml` → `parseYaml` → `validateConfig` est un point fixe.
+- L'aller-retour `cardYaml` → `parseYaml` → `validateConfig` est un point fixe,
+  `entity` d'ouverture compris.
 - **Le cadrage est vérifié dans les conditions de Home Assistant** : une carte
   créée dans un conteneur de 0 × 0 puis dimensionnée se cadre sur le bâtiment ;
   une config portant sa propre `view` reste où elle est.
@@ -91,7 +117,7 @@ coûtait 310 kB gzip.
 | `src/config.ts` | validation nommant l'entrée fautive + migration depuis lng/lat |
 | `src/fov.ts` | isovist avec occlusions |
 | `src/homography.ts` | DLT 4 points, bbox Frigate → position sur le plan |
-| `src/frigate.ts` | souscription MQTT, suivi des détections, URLs média |
+| `src/frigate.ts` | souscription MQTT, suivi des détections, URLs média, santé du lien |
 | `src/theme.ts` | palette carte marine, styles d'état, tempos |
 | `src/plan/view.ts` | caméra 2.5D orthographique, `project` / `unproject` exacts, `VIEW_PRESETS` |
 | `src/plan/controls.ts` | pivoter, zoomer, déplacer hors édition — souris et tactile |
@@ -102,7 +128,7 @@ coûtait 310 kB gzip.
 | `src/plan/history.ts` | annuler/refaire par instantanés |
 | `src/plan/scene.ts` | orchestration, isovists, boucle rAF |
 | `src/plan/yaml.ts` | sérialiseur YAML minimal (pas de js-yaml) |
-| `src/semaphore-card.ts` | carte Lit : rail, outils, inspecteur, timeline |
+| `src/semaphore-card.ts` | carte Lit : verdict, rail, chips, focus, timeline, clavier |
 | `src/semaphore-card-css.ts` | styles de la carte |
 | `studio/studio.ts` | éditeur autonome : rail d'outils, niveaux, inspecteur, options, contrôles |
 | `studio/studio-css.ts` | styles de l'éditeur (palette carte marine assumée, pas de variables HA) |
@@ -282,7 +308,57 @@ c'est probablement le changement qui a tort.
     conteneur, donc la forme par défaut (16/10, et 4/3 sous 460 px) vit dans la
     feuille de style, via `.stage.auto-aspect`.
 
-24. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
+24. **Une chip est placée par le rendu, donc aussi hors du rendu.**
+    `positionChips()` est appelé depuis `onFrame` **et** depuis `updated()`. La
+    boucle rAF ne peint qu'à raison (invariant 7), alors que Lit re-rend à chaque
+    changement d'état : entre les deux, un élément neuf n'a aucun `transform` et
+    un absolu sans transform tombe en (0, 0), c'est-à-dire sur le contrôle
+    d'étage. Ne jamais faire dépendre le placement d'un calque DOM de la seule
+    boucle de peinture.
+
+25. **L'état de la maison est une phrase, en haut, pleine largeur.** Une pastille
+    de 12 px dans un coin, non cliquable, affichant « 2 détections » était
+    l'information la plus importante de la carte servie dans son plus petit
+    caractère — et un nombre qu'il fallait finir de lire avant de savoir s'il
+    fallait s'en inquiéter. La barre porte la couleur de ce qu'elle rapporte
+    (donc la palette, invariant 20), elle porte `aria-live`, et elle ouvre le
+    dernier événement. Le repos se lit en parchemin : garder la couleur pour ce
+    qui la mérite.
+
+26. **Une ouverture peut être branchée sur son capteur, et alors elle vit.**
+    `Opening.entity` pointe un `binary_sensor` ; ouverte, l'aperture est
+    **contournée** de rouge, jamais remplie en plein — un panneau rouge opaque
+    dans une porte se lit comme une porte *fermée*, l'inverse de ce qu'il dit. Et
+    une ouverture `blocksSight` cesse de bloquer la vue quand elle s'ouvre, ce
+    qui fait de l'état des portes une entrée géométrique : `setOpenOpenings`
+    reconstruit les occultants, mais **seulement quand l'ensemble change**, sinon
+    la carte recalculerait les isovists dix fois par seconde (invariant 6).
+    Un capteur `unavailable` compte pour fermé : une alerte fausse dans un outil
+    de sécurité est ce qui fait cesser de le lire.
+
+27. **Ce que la carte ne reçoit pas, elle le dit.** MQTT injoignable et
+    historique Frigate indisponible sont deux dégradations non fatales *par
+    construction* — et c'est exactement pourquoi elles doivent s'afficher. Une
+    carte qui a l'air de marcher et qui ne rapportera jamais rien est pire qu'une
+    carte en erreur, et le symptôme (« il ne se passe jamais rien chez moi ») ne
+    remonte pas tout seul à sa cause.
+
+28. **Le clavier est branché sur la carte, pas sur la fenêtre.** La scène prend
+    le focus (`tabindex`) et répond ; un écouteur global casserait les onze
+    autres cartes du tableau de bord. `Échap` fait exception et fonctionne depuis
+    n'importe quel contrôle — c'est la sortie, et une sortie ne dépend pas de
+    l'endroit où le focus a atterri. Les autres touches se retirent quand la
+    cible est un bouton, qui possède déjà Entrée, Espace et les flèches.
+
+29. **Ce que l'utilisateur a placé lui-même survit au rechargement — et rien
+    d'autre.** Seule une vue `userFramed` est écrite dans `localStorage` : garder
+    une vue *cadrée* la figerait à la taille de la fenêtre du jour et le
+    recadrage automatique de l'invariant 16 ne tournerait plus jamais. **Cadrer**
+    efface l'enregistrement, parce que c'est précisément la demande de reprendre
+    le cadrage automatique. La clé est dérivée de la scène décrite (niveaux et
+    caméras), faute d'identifiant de carte dans une config Lovelace.
+
+30. **La couverture est un volume, et c'est le même polygone.** Le tronc de cône
     est dessiné comme une seule silhouette — objectif, puis le pourtour de
     l'isovist dans l'ordre, fermé. Une seule passe : cent triangles translucides
     partageant des arêtes se composeraient en bandes. Ne pas fabriquer une
@@ -379,8 +455,10 @@ HA ne peut trancher. Chacun a un repli qui évite que l'échec soit fatal.
   Aucune détection de collision entre les deux calques. Les chips ont désormais
   une ombre portée et un fond opaque, donc elles se lisent comme un calque
   au-dessus plutôt que comme une bouillie — mais le recouvrement reste.
-- L'angle trouvé à la main n'est pas mémorisé : recharger la page remet la vue
-  de la config.
+- Un capteur d'ouverture `unavailable` compte pour fermé et ne se signale pas.
+  C'est le bon défaut contre les fausses alertes, et c'est une information de
+  sécurité perdue : une porte dont le capteur est mort n'est pas une porte
+  fermée. À reprendre avec l'armement, qui est l'endroit où ça compte.
 - Une chip tirée sur le bord de la scène passe en pointillés (`adrift`) et
   disparaît au-delà de 44 px de correction (`off`). C'est ce qui empêche les
   caméras absentes de s'empiler dans un coin pendant un focus, mais une caméra

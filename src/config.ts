@@ -224,6 +224,12 @@ function opening(raw: unknown, wallId: string, index: number, wallLength: number
   if (at > wallLength) {
     fail(`${where} : \`at\` (${at} m) dépasse la longueur du mur (${wallLength.toFixed(2)} m).`);
   }
+  if (o.entity !== undefined && (typeof o.entity !== 'string' || !o.entity.includes('.'))) {
+    fail(
+      `${where} : \`entity\` attend l'identifiant d'une entité, comme ` +
+        `\`binary_sensor.porte_entree\`, reçu ${describe(o.entity)}.`,
+    );
+  }
   return {
     ...(raw as Opening),
     id: typeof o.id === 'string' && o.id ? o.id : uid('ouverture'),

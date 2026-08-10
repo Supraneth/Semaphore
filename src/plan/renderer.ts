@@ -11,6 +11,7 @@ import {
   signedArea,
   solidSpans,
   sub,
+  tidyOpenings,
   wallHeight,
   wallThickness,
 } from './geometry';
@@ -49,6 +50,8 @@ export interface RenderInput {
   reducedMotion: boolean;
   /** Storey separation in metres. 0 stacks them. */
   explode: number;
+  /** Ids of the openings a sensor currently reports open. */
+  openOpenings?: ReadonlySet<string>;
   /** While drawing, coverage is context and must not shout over the plan. */
   editing?: boolean;
 }
@@ -132,7 +135,9 @@ export class Renderer {
 
     for (const { level, index } of shown) {
       const z = this.levelZ(level, index, input);
-      this.drawWalls(level, z, level.id === input.activeLevel ? 1 : 0.45);
+      const dim = level.id === input.activeLevel ? 1 : 0.45;
+      this.drawWalls(level, z, dim);
+      if (input.openOpenings?.size) this.drawOpenOpenings(level, z, dim, input.openOpenings);
     }
 
     if (input.showLabels) {
@@ -405,6 +410,58 @@ export class Renderer {
       if (face.stroke) {
         ctx.strokeStyle = face.stroke;
         ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+  }
+
+  /**
+   * The openings a sensor says are open.
+   *
+   * Drawn as the aperture itself — the rectangle from sill to head across the
+   * opening's width, in the plane of the wall — outlined in the chart red. Not
+   * filled solid: an opaque red panel in a doorway reads as a *closed* door,
+   * which is the opposite of what it means. The faint wash inside it is an
+   * annotation on a hole, not a material, so invariant 18 is intact.
+   *
+   * Painted after its storey's walls rather than sorted among them: an open
+   * window on the far side of the house showing through the near wall is the
+   * behaviour you want from a security readout — the whole question is "what is
+   * open", and hiding half the answers behind the masonry would defeat it.
+   */
+  private drawOpenOpenings(
+    level: Level,
+    base: number,
+    dim: number,
+    open: ReadonlySet<string>,
+  ): void {
+    const { ctx, view } = this;
+    const red = CHART.sectorRed;
+
+    for (const wall of level.walls ?? []) {
+      const top = wallHeight(wall, level);
+      for (const o of tidyOpenings(wall)) {
+        if (!open.has(o.id)) continue;
+        const a = along(wall.a, wall.b, o.at);
+        const b = along(wall.a, wall.b, o.at + o.width);
+        const z0 = base + (o.sill ?? 0);
+        const z1 = base + Math.min(top, o.head ?? top);
+        if (z1 - z0 < 1e-3) continue;
+
+        const corners: Point[] = [
+          view.projectPoint(a, z0),
+          view.projectPoint(b, z0),
+          view.projectPoint(b, z1),
+          view.projectPoint(a, z1),
+        ];
+
+        ctx.beginPath();
+        corners.forEach((s, i) => (i ? ctx.lineTo(s[0], s[1]) : ctx.moveTo(s[0], s[1])));
+        ctx.closePath();
+        ctx.fillStyle = withAlpha(red, 0.2 * dim);
+        ctx.fill();
+        ctx.strokeStyle = withAlpha(red, 0.9 * dim);
+        ctx.lineWidth = 2.5;
         ctx.stroke();
       }
     }

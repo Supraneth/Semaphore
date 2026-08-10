@@ -241,6 +241,78 @@ plupart — seraient invisibles.
 
 ---
 
+## L'état de la maison
+
+En haut de la carte, une ligne pleine largeur qui dit ce qui se passe, en toutes
+lettres et dans la couleur de ce qu'elle rapporte :
+
+> ● **Personne — Entrée, il y a 40 s**  ⟨2 ouvertes⟩ ⟨1 hors ligne⟩
+
+ou, quand il n'y a rien à dire, `Rien à signaler depuis 3 h 12`. Elle se clique
+pour ouvrir le dernier événement, et elle est annoncée aux lecteurs d'écran.
+
+Elle remplace la pastille « 2 détections » qui vivait dans le coin : un nombre
+qu'il fallait finir de lire avant de savoir s'il fallait s'en inquiéter, et sur
+lequel on ne pouvait pas cliquer.
+
+### Portes et fenêtres
+
+Une ouverture peut nommer le capteur qui dit si elle est ouverte :
+
+```yaml
+openings:
+  - id: porte-entree
+    kind: door
+    at: 3.6
+    width: 1
+    head: 2.1
+    blocksSight: true                      # porte pleine : elle bloque la vue…
+    entity: binary_sensor.porte_entree     # …tant que ce capteur dit « fermée »
+```
+
+Ouverte, l'aperture est contournée de rouge sur le plan — on voit *laquelle*,
+pas seulement *combien*. Et une porte marquée `blocksSight` cesse de bloquer la
+vue des caméras quand elle s'ouvre : la couverture dessinée suit la maison, pas
+le dessin de la maison.
+
+Un capteur `unavailable` compte pour fermé. Une alerte fausse dans un outil de
+sécurité est ce qui fait cesser de le lire.
+
+### Au clavier
+
+Cliquez la scène, puis :
+
+| Touche | Effet |
+|---|---|
+| `1` … `9` | ouvrir la caméra n°… |
+| `←` `→` | caméra précédente / suivante |
+| `Échap` | revenir à la vue d'ensemble |
+| `C` | tout cadrer |
+| `N` | niveau suivant |
+| `S` | séparer / empiler les niveaux |
+| `?` | afficher la liste |
+
+Les raccourcis n'écoutent que la carte qui a le focus : un tableau de bord porte
+une douzaine de cartes, et aucune n'a le droit de confisquer les chiffres aux
+autres.
+
+### Ce que la carte retient
+
+L'angle que vous trouvez à la main, le niveau affiché et l'état séparé/empilé
+survivent au rechargement. **Cadrer** efface cette mémoire et rend la main au
+recadrage automatique — y compris au prochain chargement.
+
+### Quand quelque chose manque
+
+Si le module MQTT n'est pas joignable, ou si l'historique Frigate ne répond pas,
+la carte le dit dans un bandeau au lieu de faire semblant. Les deux pannes sont
+non fatales par construction — le plan s'affiche quand même — et c'est
+exactement pourquoi elles doivent s'afficher : une carte qui a l'air de marcher
+et qui ne rapportera jamais rien est plus difficile à diagnostiquer qu'une carte
+en erreur.
+
+---
+
 ## Le format de la carte
 
 | Réglage | Effet |
@@ -339,6 +411,8 @@ levels:
             at: 3.6          # mètres depuis le point a
             width: 1
             head: 2.1
+            blocksSight: true                    # porte pleine (défaut : on voit à travers)
+            entity: binary_sensor.porte_entree   # facultatif : ouverte ou fermée
       - { id: mur-est, a: [9, 0], b: [9, 7] }
     rooms:
       - id: salon
@@ -453,7 +527,12 @@ un vrai Home Assistant.
 | Recadrage au redimensionnement | une carte qui change de largeur se recadre ; une vue placée à la main survit au redimensionnement ; **Cadrer** rend la main au recadrage automatique |
 | Centrage du cadrage | boîte projetée du bâtiment comparée au centre du canvas : ≤ 0,5 px d'écart en Plan, 2.5D et Relief, marges symétriques, y compris avec un niveau à `elevation: 5`, au changement de niveau et en mode séparé |
 | Retour de focus | ouvrir une caméra puis fermer le panneau redonne exactement la vue d'ensemble d'avant |
-| Chrome adaptatif | à 360 px de carte : vignettes retirées, colonne d'étiquettes réduite, scène en 4/3, panneau en feuille pleine largeur plafonnée |
+| Chrome adaptatif | à 360 px de carte : vignettes retirées, colonne d'étiquettes réduite, scène en 4/3, panneau en feuille pleine largeur plafonnée, compteurs de la barre repliés |
+| Placement des chips | les quatre chips restent posées sur leur caméra, y compris entre deux peintures — le placement ne dépend plus de la seule boucle rAF |
+| Barre de verdict | phrase, couleur et compteurs suivent la scène en marche ; le clic ouvre le dernier événement |
+| Clavier | `2` ouvre la deuxième caméra, `Échap` rend la vue d'ensemble, `C` reprend le cadrage automatique, `?` liste les raccourcis |
+| Mémoire de la vue | lacet, inclinaison, zoom et centre identiques après rechargement ; **Cadrer** efface l'enregistrement |
+| Ouvertures | la porte et la baie du banc s'ouvrent et se ferment ; une porte `blocksSight` ouverte retire exactement sa largeur des occultants (39,5 → 38,5 m) et une caméra visant à travers passe de 3,61 à 9,88 m² |
 | Carte dépouillée | plus de bouton d'édition, plus d'interface d'éditeur dans le DOM |
 | Murs opaques | le dessus d'un mur mesure exactement `#EFE7D4` au pixel, pas une version délavée |
 | Couleur par caméra | teinter toutes les caméras en vert puis en rouge inverse bien l'écart vert-rouge moyen du canvas |
@@ -468,8 +547,8 @@ disponibilité de `ha-camera-stream`. Chacun a un repli qui évite que l'échec 
 fatal — voir `CLAUDE.md`.
 
 **Défauts connus** : les chips de caméra peuvent recouvrir les libellés de pièce
-(deux calques, aucune détection de collision) ; l'angle trouvé à la main n'est
-pas mémorisé d'un chargement à l'autre.
+(deux calques, aucune détection de collision) ; un capteur d'ouverture
+`unavailable` compte pour fermé et ne se signale pas.
 
 ### Volontairement laissé de côté
 

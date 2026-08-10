@@ -40,6 +40,15 @@ export interface Opening {
    * whole reason a camera in the hall can watch the living room.
    */
   blocksSight?: boolean;
+  /**
+   * A Home Assistant `binary_sensor` saying whether this opening is open.
+   *
+   * The geometry of the door is already here; the only thing missing to show a
+   * house's state on its own plan is which of these holes is currently a hole.
+   * Also drives sight: a door marked `blocksSight` stops blocking once it is
+   * reported open, because that is what opening a door does.
+   */
+  entity?: string;
 }
 
 /**
